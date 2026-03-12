@@ -1,0 +1,15 @@
+preprocess:
+  target_sr: 48000
+  clip_duration_sec: 60.0
+  filename_pad_zero: 3
+  audio_subtype: FLOAT
+  discard_short_tail: true
+  label_in_filename: true
+  clips_root: data/processed/clips_1min
+  metadata:
+    dir: data/processed/metadata
+    clip_label_csv: clip_labels.csv
+
+paths:
+  raw_audio_dir: data/raw/audio/long_audios
+  anno_csv: data/raw/annotations/click_annotations.csv
