@@ -3,6 +3,8 @@ from pathlib import Path
 import numpy as np
 import librosa
 import soundfile as sf
+import matplotlib.pyplot as plt
+from pathlib import Path
 
 
 def load_and_resample(
@@ -56,3 +58,59 @@ def save_audio_clip(
 ) -> None:
     """保存音频片段"""
     sf.write(output_path, segment, sr, subtype=subtype)
+
+
+
+def compute_mfcc_with_deltas(
+    y: np.ndarray,
+    sr: int,
+    n_mfcc: int = 40,
+    hop_length: int = 512,
+    n_fft: int = 2048,
+    fmax: int = 8000,
+    include_delta: bool = True,
+    include_delta_delta: bool = True
+) -> np.ndarray:
+    """计算 MFCC + delta + delta-delta"""
+    mfcc = librosa.feature.mfcc(
+        y=y, sr=sr, n_mfcc=n_mfcc,
+        hop_length=hop_length, n_fft=n_fft, fmax=fmax
+    )
+    if include_delta:
+        delta = librosa.feature.delta(mfcc)
+        mfcc = np.vstack([mfcc, delta])
+    if include_delta_delta:
+        dd = librosa.feature.delta(mfcc, order=2)
+        mfcc = np.vstack([mfcc, dd])
+    return mfcc.T  # (n_frames, n_features)
+
+
+def normalize_per_instance(mfcc: np.ndarray) -> np.ndarray:
+    """每个实例独立做 CMVN"""
+    mean = np.mean(mfcc, axis=0, keepdims=True)
+    std = np.std(mfcc, axis=0, keepdims=True) + 1e-8
+    return (mfcc - mean) / std
+
+
+def plot_and_save_mfcc(
+    mfcc: np.ndarray,
+    sr: int,
+    hop_length: int,
+    title: str,
+    save_path: Path,
+    dpi: int = 150
+):
+    """保存 MFCC 可视化图"""
+    plt.figure(figsize=(10, 4))
+    librosa.display.specshow(
+        mfcc.T,
+        x_axis='time',
+        hop_length=hop_length,
+        sr=sr,
+        cmap='viridis'
+    )
+    plt.colorbar(format='%+2.0f')
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
+    plt.close()

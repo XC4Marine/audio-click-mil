@@ -1,6 +1,6 @@
 # 数据文件
 data/raw/
-data/processed/clips_1min/
+data/processed/
 
 # 实验输出
 experiments/*/
