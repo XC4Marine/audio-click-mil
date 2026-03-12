@@ -1,0 +1,21 @@
+# 数据文件
+data/raw/
+data/processed/clips_1min/
+
+# 实验输出
+experiments/*/
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+env/
+venv/
+
+# 大型文件
+*.wav
+*.npy
+*.pth
+*.h5
+*.pkl
