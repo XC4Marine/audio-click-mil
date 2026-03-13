@@ -36,8 +36,8 @@ def balance_per_audio(
     balanced_records = []
 
     for orig_audio, group in grouped:
-        pos = group[group["has_click"] == 1]
-        neg = group[group["has_click"] == 0]
+        pos = group[group["has_positive"] == 1]
+        neg = group[group["has_positive"] == 0]
 
         n_pos = len(pos)
         n_neg = len(neg)
@@ -114,7 +114,7 @@ def main():
     # 读取包级标签
     clip_df = pd.read_csv(clip_csv_path)
     print(f"原始 clip 数量: {len(clip_df)}")
-    print("原始正样本比例:", clip_df["has_click"].mean())
+    print("原始正样本比例:", clip_df["has_positive"].mean())
 
     # 是否平衡
     balance_cfg = cfg.get("balance", {"enabled": False, "target_ratio": 1.5, "max_neg_full_neg_audio": 10})
@@ -140,9 +140,9 @@ def main():
     )
 
     print("\n划分结果：")
-    print(f"Train: {len(train_df)} clips ({train_df['has_click'].mean():.4f} 正)")
-    print(f"Val:   {len(val_df)} clips ({val_df['has_click'].mean():.4f} 正)")
-    print(f"Test:  {len(test_df)} clips ({test_df['has_click'].mean():.4f} 正)")
+    print(f"Train: {len(train_df)} clips ({train_df['has_positive'].mean():.4f} 正)")
+    print(f"Val:   {len(val_df)} clips ({val_df['has_positive'].mean():.4f} 正)")
+    print(f"Test:  {len(test_df)} clips ({test_df['has_positive'].mean():.4f} 正)")
 
     # 保存 txt
     save_split_txt(train_df, splits_dir / "train.txt")
