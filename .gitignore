@@ -1,6 +1,7 @@
 # 数据文件
-data/raw/
-data/processed/
+data/raw
+data/processed
+data/processed/metadata
 
 # 实验输出
 experiments/*/

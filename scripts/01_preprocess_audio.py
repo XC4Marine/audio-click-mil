@@ -4,11 +4,10 @@ from pathlib import Path
 import pandas as pd
 from tqdm import tqdm
 
-from src.data.preprocessor import process_one_long_audio
+from src.data.preprocessor import process_one_long_audio   # ← 保持导入
 
 
 def main():
-    # 读取配置（后续可换成 hydra）
     config_path = Path("configs/default.yaml")
     with config_path.open("r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
@@ -17,7 +16,6 @@ def main():
     paths = cfg["paths"]
 
     raw_audio_dir = Path(paths["raw_audio_dir"])
-    anno_path = Path(paths["anno_csv"])
     clips_root = Path(p["clips_root"])
     metadata_dir = Path(p["metadata"]["dir"])
     clip_csv_path = metadata_dir / p["metadata"]["clip_label_csv"]
@@ -25,20 +23,20 @@ def main():
     clips_root.mkdir(parents=True, exist_ok=True)
     metadata_dir.mkdir(parents=True, exist_ok=True)
 
-    # 读取标注
-    anno_df = pd.read_csv(anno_path)
-    anno_df['Ori_file_num(No.)'] = anno_df['Ori_file_num(No.)'].astype(int)
-
-    # 获取所有长音频
     audio_files = sorted(raw_audio_dir.glob("Ori_Recording_*.wav"))
 
     all_records = []
 
+    # 提取需要的配置项传给处理函数
+    anno_configs = p.get("annotation_files", {})
+    pos_criteria  = p.get("positive_criteria", {})
+
     for audio_path in tqdm(audio_files, desc="Processing long audios"):
         records = process_one_long_audio(
             audio_path=audio_path,
-            anno_df=anno_df,
-            target_sr=p["target_sr"],
+            anno_configs=anno_configs,           # 新增
+            positive_criteria=pos_criteria,        # 新增
+            sr=p["sr"],
             clip_duration=p["clip_duration_sec"],
             pad_zero=p["filename_pad_zero"],
             subtype=p["audio_subtype"],
@@ -48,11 +46,12 @@ def main():
         )
         all_records.extend(records)
 
-    # 保存元数据
     if all_records:
-        pd.DataFrame(all_records).to_csv(clip_csv_path, index=False)
+        df = pd.DataFrame(all_records)
+        df.to_csv(clip_csv_path, index=False)
         print(f"完成。生成 {len(all_records)} 个片段")
-        print(f"正样本: {sum(r['has_click'] for r in all_records)}")
+        print(f"正样本数量: {df['has_positive'].sum()}")               # ← 改这里
+        print(f"正样本比例: {df['has_positive'].mean():.2%}")         # 可选加这一行，更直观
         print(f"保存路径: {clips_root}")
         print(f"元数据: {clip_csv_path}")
     else:
