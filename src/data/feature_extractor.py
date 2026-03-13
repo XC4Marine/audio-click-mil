@@ -12,14 +12,15 @@ from src.utils.audio_utils import (
 
 
 # src/data/feature_extractor.py
+# src/data/feature_extractor.py
 def process_one_clip(
     clip_row: dict,
     anno_df: pd.DataFrame,
-    config: dict   # ← 改回 config
+    config: dict
 ) -> list[dict]:
     clip_path = Path(config["clips_dir"]) / clip_row["clip_filename"]
     if not clip_path.exists():
-        print(f"文件不存在，跳过: {clip_path}")
+        print(f"文件不存在，跳過: {clip_path}")
         return []
 
     y, sr = librosa.load(clip_path, sr=None, mono=True)
@@ -39,7 +40,7 @@ def process_one_clip(
     clip_start_sec = clip_row["start_sec"]
     records = []
 
-    for i in range(n_instances):
+    for i in range(n_instances):   # ← 這裡開始每個 instance 都要處理
         inst_start = i * config["instance_duration_sec"]
         inst_end = (i + 1) * config["instance_duration_sec"]
 
@@ -56,7 +57,7 @@ def process_one_clip(
         end_sample = int(inst_end * sr)
         segment = y[start_sample:end_sample]
 
-    mfcc = compute_mfcc_with_deltas(
+        mfcc = compute_mfcc_with_deltas(
             segment, sr=sr,
             n_mfcc=config["n_mfcc"],
             hop_length=config["hop_length"],
@@ -66,11 +67,12 @@ def process_one_clip(
             include_delta_delta=config["include_delta_delta"]
         )
 
-    if config["cmvn"]:
-        mfcc = normalize_per_instance(mfcc)
+        if config["cmvn"]:
+            mfcc = normalize_per_instance(mfcc)
 
         stem = clip_row["clip_filename"].replace(".wav", "")
         inst_name = f"{stem}_{i:03d}"
+
         # 保存 npy
         npy_path = Path(config["output_root"]) / config["npy_dir"] / f"{inst_name}.npy"
         np.save(npy_path, mfcc)
