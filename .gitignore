@@ -2,8 +2,9 @@
 data/original_audio/*/
 
 
+
 # 实验输出
-experiments/*/
+results/*/
 
 # Python
 __pycache__/
