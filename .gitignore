@@ -1,7 +1,6 @@
 # 数据文件
-data/raw
-data/processed
-data/processed/metadata
+data/original_audio/*/
+
 
 # 实验输出
 experiments/*/
