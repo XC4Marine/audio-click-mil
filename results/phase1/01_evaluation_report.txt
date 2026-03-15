@@ -1,0 +1,40 @@
+
+================================================================================
+Phase 1 - Bag-level检测模型评估报告
+生成时间: 2026-03-15 20:08:51
+================================================================================
+
+【数据配置】
+  音频文件数: 5
+  有效Bag数: 295
+  训练集Bag数: 177 (文件: [np.int64(3), np.int64(1), np.int64(4)])
+  测试集Bag数: 118 (文件: [np.int64(2), np.int64(5)])
+
+【特征配置】
+  特征类型: MFCC
+  MFCC维度: 20
+  采样率: 48000 Hz
+  每Bag特征维度: 40
+
+【哨声检测模型】
+  模型类型: RandomForestClassifier
+  测试集正样本数: 2
+  测试集负样本数: 116
+  ROC-AUC: 0.6444
+
+【脉冲检测模型】
+  模型类型: RandomForestClassifier
+  测试集正样本数: 42
+  测试集负样本数: 76
+  ROC-AUC: 0.6237
+
+【输出文件】
+  哨声模型: D:\Project_Github\audio_click_mil\results\phase1\whistle_detector.pkl
+  脉冲模型: D:\Project_Github\audio_click_mil\results\phase1\pulse_detector.pkl
+  带特征bags: D:\Project_Github\audio_click_mil\results\phase1\bags_with_features.pkl
+
+【下一步建议】
+  → Phase 2: 实例级定位（从bag预测反推具体时间位置）
+  → 建议收集更多音频文件以提升模型泛化能力
+
+================================================================================

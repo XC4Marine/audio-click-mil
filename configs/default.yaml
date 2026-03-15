@@ -1,72 +1,12 @@
-preprocess:
-  sr: 48000
-  clip_duration_sec: 30.0
-  filename_pad_zero: 3
-  audio_subtype: FLOAT
-  discard_short_tail: true
-  label_in_filename: true
-  clips_root: data/processed/clips_30s
-  metadata:
-    dir: data/processed/metadata
-    clip_label_csv: clip_labels.csv
-  instance_duration_sec: 1.0
-  n_mfcc: 40
-  hop_length: 512
-  n_fft: 2048
-  fmax: 8000
-  include_delta: true
-  include_delta_delta: true
-  cmvn: true
-  dpi: 150
-  highpass_cutoff_hz: 5000.0 #滤波器参数
-  highpass_order: 4
-# ── 新增：正样本判定依据 ────────────────────────────────────────
-  positive_criteria:
-    whistle:    true
-    clicktrain: true
-    burstpulse: true
-    buzz:       true
-  # ── 新增：每种信号的标注文件配置 ────────────────────────────────
-  annotation_files:
-    whistle:
-      path: data/raw/annotations/WhistleParameters-clean.csv
-      start_column: "Whistle Begins (s)"
-      duration_column: "Duration (ms)"          # 单位 ms，需要 /1000
-      end_column: null                          # 如果有 end 列就填，没有就 null
-    clicktrain:
-      path: data/raw/annotations/ClickTrains.csv
-      start_column: "Train_start(s)"
-      end_column: "Train_end(s)"
-      duration_column: null
-    burstpulse:
-      path: data/raw/annotations/BurstPulseTrains.csv
-      start_column: "Train_start(s)"
-      end_column: "Train_end(s)"
-      duration_column: null
-    buzz:
-      path: data/raw/annotations/BuzzTrains.csv
-      start_column: "Train_start(s)"
-      end_column: "Train_end(s)"
-      duration_column: null
-
-paths:
-  raw_audio_dir: data/raw/audio/long_audios
-  anno_csv: data/raw/annotations/click_annotations.csv
-  clips_dir: data/processed/clips_1min
-  metadata_dir: data/processed/metadata
-  features_root: data/processed/features_1s
-  npy_subdir: mfcc_npy
-  img_subdir: mfcc_images
-  instance_label_csv: data/processed/instance_labels/instance_labels.csv
-  clip_label_csv: data/processed/metadata/clip_labels.csv
-  splits_dir: data/processed/splits
-
-extract:
-  tqdm_desc: "提取 instance-level 特征"
-  error_on_missing_clip: true      # 是否在 clip 不存在时报错（默认 true）
-
-# configs/default.yaml 補充
-balance:
-  enabled: true               # 是否進行正負平衡
-  target_ratio: 1.5           # 負:正 最大比例
-  max_neg_full_neg_audio: 10  # 全負音頻最多保留多少負樣本
+phase0:
+  data_root: "D:\Project_Github\audio_click_mil\data"
+  results_dir: "results/phase0"
+  csv_files:
+    whistle: "WhistleParameters-clean.csv"
+    click:   "ClickTrains.csv"
+    burst:   "BurstPulseTrains.csv"
+    buzz:    "BuzzTrains.csv"
+    summary: "Results.csv"
+  # 后续会加
+  bag_duration_target_sec: 120
+  bag_hop_sec: 60
