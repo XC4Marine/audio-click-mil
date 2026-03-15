@@ -1,0 +1,110 @@
+﻿Data (YYYY-MM-DD),Season,Longitude (°E),Latitude (°N),"Tide
+high tide (hh-mm) / tidal height (cm)
+low tide (hh-mm) / tidal height (cm)",Original audio_file (No.),Start time (HH:MM:SS),End time (HH:MM:SS),Pulse_train_num,Whistle_num,Water Depth (m),Dolphin group size,Dolphin Behavior
+2022/6/20,Summer,118.05259,24.42527," 04: 55 / 568, 16: 51 / 523
+10: 59 / 168, 23: 15 / 90",1,9:59:58,10:29:57,"18
+(Click: 17; BurstPulse: 1; Buzz: 0)","1
+(High quality: 1)",13.9,5,Travelling
+2022/8/23,Summer,118.02099,24.4188," 09: 05 / 453, 22: 30 / 494
+03: 21 / 249, 15: 44 / 139",2,10:29:55,10:59:54,"61
+(Click: 61; BurstPulse: 0; Buzz: 0)","1
+(High quality: 1)",11.7,15,Travelling
+2022/11/12,Autumn,117.9254,24.41298," 01: 33 / 558, 14: 30 / 574
+08: 06 / 75, 20: 33 / 200",3,10:59:56,11:29:55,"5
+(Click: 5; BurstPulse: 0; Buzz: 0)","1
+(High quality: 1)",5.9,5,Travelling
+,,,,,4,11:59:56,12:29:55,"13
+(Click: 12; BurstPulse: 0; Buzz: 1)","1
+(High quality: 1)",6.7,3,"Travelling, Foraging"
+,,,,,5,12:29:56,12:59:55,"16
+(Click: 14; BurstPulse: 1; Buzz: 1)","1
+(High quality: 1)",,,"Travelling, Foraging"
+2022/12/4,Winter,117.99167,24.40797," 09: 21 / 526, 21: 34 / 555
+03: 09 / 154, 15: 28 / 175",6,10:06:19,10:36:18,"104
+(Click: 57; BurstPulse: 4; Buzz: 43)","28
+(High quality: 19)",7.4,6,Travelling
+2023/4/16,Spring,118.02205,24.41836,-,7,11:59:55,12:29:54,"10
+(Click: 10; BurstPulse: 0; Buzz: 0)","1
+(High quality: 1)",10.2,4,"Foraging, Traveling"
+2023/6/29,Summer,118.4638,24.61015," 02: 37 / 552, 14: 20 / 531
+08: 34 / 168, 20: 41 / 73",8,8:59:50,9:29:49,"74
+(Click: 73; BurstPulse: 1; Buzz: 0)","24
+(High quality: 17)",18,9,"Travelling, Foraging"
+2023/11/4,Autumn,117.98318,24.40293,-,9,9:53:30,10:23:29,"39
+(Click: 39; BurstPulse: 0; Buzz: 0)","1
+(High quality: 1)",5.1,8,Foraging
+2024/1/5,Winter,118.48471,24.60658," 05: 08 / 454, 18: 25 / 488
+00: 01 / 196, 12: 05 / 203",10,9:10:04,9:39:12,"83
+(Click: 81; BurstPulse: 2; Buzz: 0)","8
+(High quality: 5)",3,4,Foraging
+2024/1/9,Winter,118.13788,24.41663,"10: 39 / 521, 22: 14 / 518
+04: 05 / 99, 16: 35 / 209",11,12:08:00,12:20:49,"16
+(Click: 16; BurstPulse: 0; Buzz: 0)","18
+(High quality: 11)",5.2,6,"Travelling, Foraging"
+2024/4/8,Spring,118.40412,24.57768,"11: 55 / 620
+05: 42 / 50, 18: 04 / 65",12,12:37:06,13:07:05,0,"3
+(High quality: 3)",7.2,6,"Travelling, Foraging"
+2024/4/19,Spring,118.38397,24.53762,"09: 47 / 479, 21: 48 / 464
+03: 07 / 161, 15: 55 / 203",13,10:08:22,10:38:21,"17
+(Click: 17; BurstPulse: 0; Buzz: 0)","7
+(High quality: 7)",13.3,11,"Travelling, Milling"
+2024/5/20,Spring,118.06743,24.45934,"10: 13 / 500, 22: 46 / 505
+03: 59 / 166, 16: 33 / 131 ",14,8:12:50,8:42:49,"71
+(Click: 71; BurstPulse: 0; Buzz: 0)","30
+(High quality: 21)",24.3,12,"Foraging, Traveling, Milling"
+2024/5/30,Spring,117.97118,24.39911,"05: 11 / 532, 17: 01 / 493
+11: 18 / 193, 23: 37 / 97",15,7:40:45,8:58:09,"3
+(Click: 3; BurstPulse 0; Buzz: 0)",0,9.6,3, Foraging
+2024/5/31,Spring,118.43745,24.58247,"06: 12 / 527, 18: 16 / 488
+12: 26 / 182",16,12:27:50,12:57:49,"16
+(Click: 16; BurstPulse: 0; Buzz: 0)","1
+(High quality: 1)",2.8,7,"Travelling, Foraging, Milling"
+,,,,,17,12:57:49,13:27:48,"39
+(Click: 38; BurstPulse: 1; Buzz: 0)","1
+(High quality: 1)",2.1,18,"Travelling, Milling"
+2024/6/26,Summer,118.47499,24.59383,"03: 24 / 579, 15: 07 / 540
+09: 26 / 165, 21: 38 / 43 ",18,11:50:26,12:20:23,"4
+(Click: 4; BurstPulse: 0; Buzz: 0)",0,4,8,"Travelling,Foraging"
+2024/7/15,Summer,118.09245,24.43161,"06: 14 / 475, 19: 01 / 443
+12: 45 / 163",19,10:02:42,10:32:39,"16
+(Click: 16; BurstPulse: 0; Buzz: 0)","11
+(High quality: 5)",14.8,14,"Foraging, Traveling"
+2024/7/22,Summer,118.42036,24.58232,"01: 00 / 592, 12: 41 / 558
+06: 56 / 163, 19: 08 / 12",20,10:16:27,10:46:26,"11
+(Click: 11; BurstPulse: 0; Buzz: 0)",0,7.8,6,"Travelling,Foraging"
+2024/8/2,Summer,118.07245,24.42438,"10: 26 / 493, 23: 42 / 546
+04: 41 / 202, 16: 57 / 63",21,11:05:05,11:35:04,"42
+(Click: 42; BurstPulse: 0; Buzz: 0)",0,19.7,8,"Travelling,Foraging"
+,,,,,22,11:35:05,12:05:04,"41
+(Click: 41; BurstPulse: 0; Buzz: 0)",0,,,Foraging
+,,,,,23,12:05:05,12:35:04,"22
+(Click: 19; BurstPulse: 2; Buzz: 1)",0,,,Foraging
+,,,,,24,12:35:05,13:05:04,"23
+(Click: 21; BurstPulse: 1; Buzz: 1)",0,,,"Travelling,Foraging"
+,,,,,25,13:05:04,13:35:03,"22
+(Click: 21; BurstPulse: 1; Buzz: 0)",0,,,Foraging
+,,,,,26,13:35:04,14:05:03,"5
+(Click: 4; BurstPulse: 1; Buzz: 0)",0,,,Foraging
+2024/8/5,Summer,117.96753,24.39916,"01: 07 / 573, 12: 49 / 547
+07: 02 / 167, 19: 11 / 54",27,12:20:37,12:50:36,"3
+(Click: 3; BurstPulse: 0; Buzz: 0)","5
+(High quality: 3)",7.3,13,"Travelling, Foraging, Milling"
+2024/8/10,Summer,117.96753,24.39916,"03: 32 / 552, 15: 43 / 531
+09: 40 / 138, 21: 46 / 136",28,9:27:44,9:57:43,"18
+(Click: 16; BurstPulse: 0; Buzz: 2)",0,7,3,Foraging
+,,118.06084,24.45909,,29,10:53:11,11:23:08,"53
+(Click: 52; BurstPulse: 0; Buzz: 1)",0,8,7,"Foraging, Socialising"
+,,,,,30,11:23:11,11:53:10,"18
+(Click: 18; BurstPulse: 0; Buzz: 0)",0,,,Foraging
+,,,,,31,11:53:10,12:23:09,"17
+(Click: 17; BurstPulse: 0; Buzz: 0)",0,,,"Foraging, Socialising, Milling"
+,,,,,32,12:23:10,12:53:09,"11
+(Click: 11; BurstPulse: 0; Buzz: 0)",0,,,Travelling
+2024/9/2,Autumn,118.06083,24.41815,"00: 05 / 571, 11: 54 / 555
+06: 03 / 169, 18: 13 / 80",33,11:48:45,12:18:42,"1
+(Click: 1; BurstPulse: 0; Buzz: 0)",0,12.5,5,"Travelling,Foraging"
+,,,,,34,12:18:45,12:48:44,"2
+(Click: 2; BurstPulse: 0; Buzz: 0)",0,,,Foraging
+2024/9/3,Autumn,118.00533,24.41041,"00: 39 / 581, 12: 32 / 571
+06: 38 / 154, 18: 47 / 83",35,10:27:13,10:57:12,"3
+(Click: 3; BurstPulse: 0; Buzz: 0)",0,7.9,2,Foraging
