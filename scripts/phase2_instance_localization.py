@@ -1,5 +1,5 @@
 # =============================================================================
-# Phase 2: 实例级定位 (Instance-level Localization) - 修复版
+# Phase 2: 实例级定位 - JSON序列化修复版
 # =============================================================================
 
 import pandas as pd
@@ -10,6 +10,8 @@ from pathlib import Path
 from datetime import datetime
 from tqdm import tqdm
 from scipy.ndimage import gaussian_filter1d
+from sklearn.model_selection import train_test_split
+import json
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -28,18 +30,37 @@ CONFIG = {
     "probability_threshold": 0.5,
     "min_event_duration": 0.5,
     "merge_gap": 1.0,
+    "test_size": 0.3,
+    "random_state": 42,
 }
 
 CONFIG["phase2_output"].mkdir(exist_ok=True, parents=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 🔧 新增：类型转换辅助函数
+# ─────────────────────────────────────────────────────────────────────────────
+def convert_to_native(obj):
+    """将numpy类型转换为Python原生类型（用于JSON序列化）"""
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {k: convert_to_native(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_to_native(i) for i in obj]
+    return obj
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 2. 加载Phase 1模型和bags
 # ─────────────────────────────────────────────────────────────────────────────
 print("="*80)
-print("Phase 2: 实例级定位 (修复版)")
+print("Phase 2: 实例级定位 (JSON修复版)")
 print("="*80)
 
-print("\n[1/5] 加载Phase 1模型和bags...")
+print("\n[1/6] 加载Phase 1模型和bags...")
 
 whistle_model = joblib.load(CONFIG["phase1_output"] / "whistle_detector.pkl")
 pulse_model = joblib.load(CONFIG["phase1_output"] / "pulse_detector.pkl")
@@ -55,9 +76,96 @@ valid_bags = [b for b in bags if b["features"].get("mfcc") is not None]
 print(f"  ✓ 有效Bag数: {len(valid_bags)}")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. 帧级预测
+# 3. 训练集/验证集样本统计
 # ─────────────────────────────────────────────────────────────────────────────
-print("\n[2/5] 帧级预测（从Bag到帧）...")
+print("\n[2/6] 训练集/验证集样本统计...")
+
+file_nos = np.array([b["file_no"] for b in valid_bags])
+y_whistle = np.array([b["whistle_label"] for b in valid_bags])
+y_pulse = np.array([b["pulse_label"] for b in valid_bags])
+
+unique_files = np.unique(file_nos)
+train_files, val_files = train_test_split(
+    unique_files, 
+    test_size=CONFIG["test_size"], 
+    random_state=CONFIG["random_state"]
+)
+
+train_mask = np.isin(file_nos, train_files)
+val_mask = np.isin(file_nos, val_files)
+
+# 哨声统计
+whistle_train_positive = int(np.sum(y_whistle[train_mask]))
+whistle_train_negative = int(np.sum(y_whistle[train_mask] == 0))
+whistle_val_positive = int(np.sum(y_whistle[val_mask]))
+whistle_val_negative = int(np.sum(y_whistle[val_mask] == 0))
+
+# 脉冲统计
+pulse_train_positive = int(np.sum(y_pulse[train_mask]))
+pulse_train_negative = int(np.sum(y_pulse[train_mask] == 0))
+pulse_val_positive = int(np.sum(y_pulse[val_mask]))
+pulse_val_negative = int(np.sum(y_pulse[val_mask] == 0))
+
+print("\n" + "="*70)
+print("【数据集划分】")
+print("="*70)
+print(f"  训练集文件: {sorted([int(f) for f in train_files])} ({len(train_files)} 个)")
+print(f"  验证集文件: {sorted([int(f) for f in val_files])} ({len(val_files)} 个)")
+
+print("\n" + "="*70)
+print("【哨声样本分布】")
+print("="*70)
+print(f"  训练集: 正样本 {whistle_train_positive} | 负样本 {whistle_train_negative} | 总计 {int(np.sum(train_mask))}")
+print(f"  验证集: 正样本 {whistle_val_positive} | 负样本 {whistle_val_negative} | 总计 {int(np.sum(val_mask))}")
+print(f"  合计:   正样本 {whistle_train_positive + whistle_val_positive} | 负样本 {whistle_train_negative + whistle_val_negative} | 总计 {len(valid_bags)}")
+
+print("\n" + "="*70)
+print("【脉冲样本分布】")
+print("="*70)
+print(f"  训练集: 正样本 {pulse_train_positive} | 负样本 {pulse_train_negative} | 总计 {int(np.sum(train_mask))}")
+print(f"  验证集: 正样本 {pulse_val_positive} | 负样本 {pulse_val_negative} | 总计 {int(np.sum(val_mask))}")
+print(f"  合计:   正样本 {pulse_train_positive + pulse_val_positive} | 负样本 {pulse_train_negative + pulse_val_negative} | 总计 {len(valid_bags)}")
+
+whistle_imbalance_ratio = whistle_train_negative / max(whistle_train_positive, 1)
+pulse_imbalance_ratio = pulse_train_negative / max(pulse_train_positive, 1)
+
+print("\n" + "="*70)
+print("【类别不平衡分析】")
+print("="*70)
+print(f"  哨声不平衡比: {whistle_imbalance_ratio:.1f}:1 (负:正)")
+print(f"  脉冲不平衡比: {pulse_imbalance_ratio:.1f}:1 (负:正)")
+
+# 🔧 修复：使用原生Python类型构建字典
+dataset_stats = {
+    "train_files": sorted([int(f) for f in train_files]),
+    "val_files": sorted([int(f) for f in val_files]),
+    "whistle": {
+        "train_positive": whistle_train_positive,
+        "train_negative": whistle_train_negative,
+        "val_positive": whistle_val_positive,
+        "val_negative": whistle_val_negative,
+    },
+    "pulse": {
+        "train_positive": pulse_train_positive,
+        "train_negative": pulse_train_negative,
+        "val_positive": pulse_val_positive,
+        "val_negative": pulse_val_negative,
+    },
+    "imbalance_ratio": {
+        "whistle": float(whistle_imbalance_ratio),
+        "pulse": float(pulse_imbalance_ratio),
+    }
+}
+
+stats_path = CONFIG["phase2_output"] / "dataset_statistics.json"
+with open(stats_path, 'w', encoding='utf-8') as f:
+    json.dump(dataset_stats, f, indent=2, ensure_ascii=False)
+print(f"\n  ✓ 统计信息已保存: {stats_path}")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. 帧级预测
+# ─────────────────────────────────────────────────────────────────────────────
+print("\n[3/6] 帧级预测（从Bag到帧）...")
 
 frames_per_second = CONFIG["target_sr"] / CONFIG["mfcc_hop_length"]
 print(f"  帧率: {frames_per_second:.1f} frames/sec")
@@ -93,15 +201,13 @@ frame_df = pd.DataFrame(frame_predictions)
 print(f"  ✓ 生成 {len(frame_df)} 条帧级预测")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4. 事件检测与时间定位 (修复IndexError)
+# 5. 事件检测与时间定位
 # ─────────────────────────────────────────────────────────────────────────────
-print("\n[3/5] 事件检测与时间定位...")
+print("\n[4/6] 事件检测与时间定位...")
 
 def detect_events(frame_df, label_col, threshold, min_duration, merge_gap, 
                   frames_per_second):
-    """
-    从帧级概率检测事件 (已修复IndexError)
-    """
+    """从帧级概率检测事件"""
     events = []
     
     for file_no in frame_df["file_no"].unique():
@@ -112,10 +218,7 @@ def detect_events(frame_df, label_col, threshold, min_duration, merge_gap,
         if len(times) == 0:
             continue
         
-        # 平滑概率曲线
         probs_smooth = gaussian_filter1d(probs, sigma=2)
-        
-        # 阈值检测
         above_threshold = probs_smooth >= threshold
         
         event_candidates = []
@@ -128,10 +231,9 @@ def detect_events(frame_df, label_col, threshold, min_duration, merge_gap,
                 start_idx = i
             elif not is_above and in_event:
                 in_event = False
-                end_idx = i  # 事件结束于当前帧之前
+                end_idx = i
                 
                 start_time = times[start_idx]
-                # 🔧 修复：使用 end_idx - 1 确保不越界
                 end_time = times[min(end_idx - 1, len(times) - 1)]
                 duration = end_time - start_time
                 
@@ -139,17 +241,14 @@ def detect_events(frame_df, label_col, threshold, min_duration, merge_gap,
                     confidence = float(np.mean(probs_smooth[start_idx:end_idx]))
                     event_candidates.append((file_no, start_time, end_time, confidence))
         
-        # 🔧 修复：处理最后一个事件（如果持续到末尾）
         if in_event:
             start_time = times[start_idx]
-            # 🔧 修复：使用 len(times) - 1 作为最后一个有效索引
             end_time = times[len(times) - 1]
             duration = end_time - start_time
             if duration >= min_duration:
                 confidence = float(np.mean(probs_smooth[start_idx:]))
                 event_candidates.append((file_no, start_time, end_time, confidence))
         
-        # 合并相邻事件
         merged_events = []
         for evt in sorted(event_candidates, key=lambda x: x[1]):
             if merged_events and evt[1] - merged_events[-1][2] < merge_gap:
@@ -166,7 +265,6 @@ def detect_events(frame_df, label_col, threshold, min_duration, merge_gap,
     
     return events
 
-# 检测哨声事件
 whistle_events = detect_events(
     frame_df, "whistle_prob", 
     CONFIG["probability_threshold"],
@@ -175,7 +273,6 @@ whistle_events = detect_events(
     frames_per_second
 )
 
-# 检测脉冲事件
 pulse_events = detect_events(
     frame_df, "pulse_prob",
     CONFIG["probability_threshold"],
@@ -188,9 +285,9 @@ print(f"  ✓ 检测哨声事件: {len(whistle_events)} 个")
 print(f"  ✓ 检测脉冲事件: {len(pulse_events)} 个")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5. 定位精度评估
+# 6. 定位精度评估
 # ─────────────────────────────────────────────────────────────────────────────
-print("\n[4/5] 定位精度评估...")
+print("\n[5/6] 定位精度评估...")
 
 whistle_df = pd.read_csv(CONFIG["data_root"] / "WhistleParameters-clean.csv")
 click_df = pd.read_csv(CONFIG["data_root"] / "ClickTrains.csv")
@@ -205,7 +302,6 @@ buzz_df.columns = buzz_df.columns.str.strip()
 available_files = [1, 2, 3, 4, 5]
 tolerance = 2.0
 
-# 哨声评估
 whistle_gt = whistle_df[
     whistle_df["Original Audio File (No.)"].astype(int).isin(available_files)
 ].copy()
@@ -265,7 +361,6 @@ print(f"  精确率: {whistle_eval['precision']:.4f}")
 print(f"  召回率: {whistle_eval['recall']:.4f}")
 print(f"  F1分数: {whistle_eval['f1']:.4f}")
 
-# 脉冲评估
 pulse_gt = pd.concat([
     click_df[click_df["Ori_file_num(No.)"].astype(int).isin(available_files)],
     burst_df[burst_df["Ori_file_num(No.)"].astype(int).isin(available_files)],
@@ -330,9 +425,9 @@ print(f"  召回率: {pulse_eval['recall']:.4f}")
 print(f"  F1分数: {pulse_eval['f1']:.4f}")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6. 保存结果
+# 7. 保存结果
 # ─────────────────────────────────────────────────────────────────────────────
-print("\n[5/5] 保存结果...")
+print("\n[6/6] 保存结果...")
 
 whistle_events_df = pd.DataFrame(whistle_events, 
     columns=["file_no", "start_time", "end_time", "confidence"])
@@ -353,9 +448,25 @@ print(f"  ✓ 帧级预测: {frame_path}")
 
 eval_report = f"""
 ================================================================================
-Phase 2 - 实例级定位评估报告 (修复版)
+Phase 2 - 实例级定位评估报告
 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 ================================================================================
+
+【数据集划分】
+  训练集文件: {sorted([int(f) for f in train_files])} ({len(train_files)} 个)
+  验证集文件: {sorted([int(f) for f in val_files])} ({len(val_files)} 个)
+
+【训练集样本分布】
+  哨声: 正样本 {whistle_train_positive} | 负样本 {whistle_train_negative}
+  脉冲: 正样本 {pulse_train_positive} | 负样本 {pulse_train_negative}
+
+【验证集样本分布】
+  哨声: 正样本 {whistle_val_positive} | 负样本 {whistle_val_negative}
+  脉冲: 正样本 {pulse_val_positive} | 负样本 {pulse_val_negative}
+
+【类别不平衡比】
+  哨声: {whistle_imbalance_ratio:.1f}:1 (负:正)
+  脉冲: {pulse_imbalance_ratio:.1f}:1 (负:正)
 
 【配置参数】
   概率阈值: {CONFIG['probability_threshold']}
@@ -382,6 +493,7 @@ Phase 2 - 实例级定位评估报告 (修复版)
 【输出文件】
   检测事件: {events_path}
   帧级预测: {frame_path}
+  数据集统计: {stats_path}
 
 ================================================================================
 """
