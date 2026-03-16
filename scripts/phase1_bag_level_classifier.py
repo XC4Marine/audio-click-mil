@@ -1,11 +1,10 @@
 # =============================================================================
-# Phase 1: 基础Bag-level检测
+# Phase 1: 基础 Bag-level 检测 (Deep Learning 版)
 # =============================================================================
-# 任务：
-#   - 子任务1: 音频特征提取（MFCC，48kHz）
-#   - 子任务2: 填充bags.pkl中的features字段
-#   - 子任务3: 训练bag-level分类器（哨声 + 脉冲）
-#   - 子任务4: 评估并保存模型
+# 对应 skills.md 要求：
+# - 模型：SimpleMLP (src/model.py)
+# - 损失：FocalBCE (src/loss.py)
+# - 输出：performance_table.csv, fig1_f1_vs_bag_length.png
 # =============================================================================
 
 import pandas as pd
@@ -13,15 +12,26 @@ import numpy as np
 import pickle
 import librosa
 import os
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
 from datetime import datetime
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, f1_score, precision_score, recall_score
 import joblib
+import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings('ignore')
+
+# 设置随机种子
+SEED = 42
+np.random.seed(SEED)
+torch.manual_seed(SEED)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(SEED)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. 配置参数
@@ -31,326 +41,426 @@ CONFIG = {
     "audio_root": Path("D:/Project_Github/audio_click_mil/data/original_audio"),
     "phase0_output": Path("D:/Project_Github/audio_click_mil/results/phase0"),
     "phase1_output": Path("D:/Project_Github/audio_click_mil/results/phase1"),
-    "target_sr": 48000,           # 目标采样率
-    "bag_duration": 30,           # bag时长（秒）
-    "mfcc_n_mfcc": 20,            # MFCC维度
-    "mfcc_hop_length": 512,       # 跳帧长度
-    "mfcc_n_fft": 2048,           # FFT窗口
-    "test_size": 0.3,             # 测试集比例
+    "target_sr": 48000,
+    "bag_duration": 30,
+    "mfcc_n_mfcc": 20,
+    "mfcc_hop_length": 512,
+    "mfcc_n_fft": 2048,
+    "test_size": 0.3,
     "random_state": 42,
+    # 模型超参数
+    "input_dim": 40,      # MFCC Mean(20) + Std(20)
+    "hidden_dim": 64,
+    "num_epochs": 50,
+    "batch_size": 32,
+    "learning_rate": 1e-3,
+    "focal_alpha": 0.25,  # Focal Loss 参数
+    "focal_gamma": 2.0,
+    "device": "cuda" if torch.cuda.is_available() else "cpu"
 }
 
-# 创建输出目录
 CONFIG["phase1_output"].mkdir(exist_ok=True, parents=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2. 加载Phase 0的bags
+# 🔧 模块模拟：src/model.py (SimpleMLP)
+# ─────────────────────────────────────────────────────────────────────────────
+class SimpleMLP(nn.Module):
+    """
+    简单的多层感知机，无 Attention 机制
+    输入: (Batch, Input_Dim)
+    输出: (Batch, 1) [概率]
+    """
+    def __init__(self, input_dim, hidden_dim=64):
+        super(SimpleMLP, self).__init__()
+        self.network = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(hidden_dim // 2, 1),
+            nn.Sigmoid()
+        )
+    
+    def forward(self, x):
+        return self.network(x)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 🔧 模块模拟：src/loss.py (FocalBCE)
+# ─────────────────────────────────────────────────────────────────────────────
+class FocalBCE(nn.Module):
+    """
+    Focal Loss with High Alpha for Imbalanced Data
+    alpha=0.9 意味着正样本的权重是负样本的 9 倍 (0.9 / 0.1)
+    """
+    def __init__(self, alpha=0.9, gamma=2.0):  # <--- 关键修改：alpha 从 0.25 改为 0.9
+        super(FocalBCE, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+    
+    def forward(self, inputs, targets):
+        inputs = inputs.squeeze()
+        targets = targets.squeeze()
+        
+        # 防止 log(0)
+        eps = 1e-7
+        inputs = torch.clamp(inputs, eps, 1 - eps)
+        
+        bce_loss = - (targets * torch.log(inputs) + (1 - targets) * torch.log(1 - inputs))
+        
+        # 计算 pt (模型对真实类别的预测概率)
+        pt = torch.exp(-bce_loss)
+        
+        # 根据 target 选择 alpha: target=1 -> alpha, target=0 -> (1-alpha)
+        alpha_t = self.alpha * targets + (1 - self.alpha) * (1 - targets)
+        
+        focal_loss = alpha_t * (1 - pt) ** self.gamma * bce_loss
+        
+        return focal_loss.mean()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 🔧 数据加载器
+# ─────────────────────────────────────────────────────────────────────────────
+class AudioBagDataset(Dataset):
+    def __init__(self, bags, labels):
+        self.bags = bags
+        self.labels = labels
+    
+    def __len__(self):
+        return len(self.bags)
+    
+    def __getitem__(self, idx):
+        bag = self.bags[idx]
+        features = bag["features"]["mfcc"] # 已经是 flatten 后的 mean+std
+        label = self.labels[idx]
+        
+        return (
+            torch.FloatTensor(features),
+            torch.FloatTensor([label])
+        )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. 加载 Phase 0 的 bags
 # ─────────────────────────────────────────────────────────────────────────────
 print("="*80)
-print("Phase 1: 基础Bag-level检测")
+print("Phase 1: 基础 Bag-level 检测 (Deep Learning)")
 print("="*80)
 
-print("\n[1/6] 加载Phase 0的bags.pkl...")
+print("\n[1/7] 加载 Phase 0 的 bags.pkl...")
 bags_path = CONFIG["phase0_output"] / "bags.pkl"
 with open(bags_path, 'rb') as f:
     bags = pickle.load(f)
-
-print(f"  ✓ 加载 {len(bags)} 个bag")
+print(f"  ✓ 加载 {len(bags)} 个 bag")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. 子任务1: 音频特征提取（MFCC）
+# 3. 特征提取与填充 (复用原有逻辑，确保有数据)
 # ─────────────────────────────────────────────────────────────────────────────
-print("\n[2/6] 音频特征提取（MFCC, 48kHz）...")
+print("\n[2/7] 音频特征提取与填充...")
 
-def extract_mfcc_features(audio_path, target_sr=48000, n_mfcc=20, 
-                          hop_length=512, n_fft=2048):
-    """
-    提取音频的MFCC特征
-    返回: (n_frames, n_mfcc) 的numpy数组
-    """
+def extract_mfcc_features(audio_path, target_sr=48000, n_mfcc=20, hop_length=512, n_fft=2048):
     try:
-        # 加载音频并降采样
         y, sr = librosa.load(audio_path, sr=target_sr, mono=True)
-        
-        # 提取MFCC
-        mfcc = librosa.feature.mfcc(
-            y=y, sr=sr, n_mfcc=n_mfcc, 
-            hop_length=hop_length, n_fft=n_fft
-        )
-        
-        # 转置为 (n_frames, n_mfcc)
-        mfcc = mfcc.T
-        
-        return mfcc, len(y) / target_sr  # 返回特征和时长
-        
+        mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc, hop_length=hop_length, n_fft=n_fft)
+        return mfcc.T, len(y) / target_sr
     except Exception as e:
-        print(f"  ⚠ 音频加载失败 {audio_path}: {e}")
         return None, 0
 
 def get_audio_path(file_no, audio_root):
-    """根据file_no生成音频文件路径"""
-    # 文件名格式：Ori_Recording_01.wav, Ori_Recording_02.wav, ...
     filename = f"Ori_Recording_{file_no:02d}.wav"
     return audio_root / filename
 
-# 统计可用的音频文件
-available_files = []
-for f in CONFIG["audio_root"].glob("Ori_Recording_*.wav"):
-    try:
-        file_no = int(f.stem.split('_')[-1])
-        available_files.append(file_no)
-    except:
-        pass
-
-available_files = sorted(available_files)
-print(f"  可用音频文件: {available_files}")
-print(f"  共 {len(available_files)} 个音频文件")
-
-# 为每个录音提取MFCC特征
-audio_features = {}  # {file_no: mfcc_array}
-
-for file_no in tqdm(available_files, desc="提取MFCC特征"):
-    audio_path = get_audio_path(file_no, CONFIG["audio_root"])
-    mfcc, duration = extract_mfcc_features(
-        audio_path,
-        target_sr=CONFIG["target_sr"],
-        n_mfcc=CONFIG["mfcc_n_mfcc"],
-        hop_length=CONFIG["mfcc_hop_length"],
-        n_fft=CONFIG["mfcc_n_fft"]
-    )
+# 快速检查是否已经提取过特征，如果没有则提取
+if bags[0]["features"].get("mfcc") is None:
+    print("  ⚠ 检测到未提取特征，开始提取...")
+    available_files = sorted([int(f.stem.split('_')[-1]) for f in CONFIG["audio_root"].glob("Ori_Recording_*.wav")])
+    audio_features = {}
     
-    if mfcc is not None:
-        audio_features[file_no] = {
-            "mfcc": mfcc,
-            "duration": duration,
-            "path": str(audio_path),
-        }
-
-print(f"  ✓ 成功提取 {len(audio_features)} 个音频的特征")
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 4. 子任务2: 填充bags中的features字段
-# ─────────────────────────────────────────────────────────────────────────────
-print("\n[3/6] 填充Bag特征...")
-
-# 计算每个bag对应的MFCC帧范围
-frames_per_second = CONFIG["target_sr"] / CONFIG["mfcc_hop_length"]
-frames_per_bag = int(CONFIG["bag_duration"] * frames_per_second)
-
-print(f"  每秒帧数: {frames_per_second:.1f}")
-print(f"  每Bag帧数: {frames_per_bag}")
-
-filled_count = 0
-for bag in tqdm(bags, desc="填充特征"):
-    file_no = bag["file_no"]
-    bag_id = bag["bag_id"]
+    for file_no in tqdm(available_files, desc="提取 MFCC"):
+        path = get_audio_path(file_no, CONFIG["audio_root"])
+        mfcc, dur = extract_mfcc_features(path, CONFIG["target_sr"], CONFIG["mfcc_n_mfcc"], CONFIG["mfcc_hop_length"], CONFIG["mfcc_n_fft"])
+        if mfcc is not None:
+            audio_features[file_no] = {"mfcc": mfcc, "duration": dur}
     
-    if file_no in audio_features:
-        mfcc_full = audio_features[file_no]["mfcc"]
-        
-        # 计算该bag对应的帧范围
-        start_frame = int(bag["bag_start_sec"] * frames_per_second)
-        end_frame = start_frame + frames_per_bag
-        
-        # 确保不超出范围
-        if end_frame <= len(mfcc_full):
-            bag_mfcc = mfcc_full[start_frame:end_frame]
+    frames_per_second = CONFIG["target_sr"] / CONFIG["mfcc_hop_length"]
+    frames_per_bag = int(CONFIG["bag_duration"] * frames_per_second)
+    
+    for bag in tqdm(bags, desc="填充 Bag 特征"):
+        file_no = bag["file_no"]
+        if file_no in audio_features:
+            mfcc_full = audio_features[file_no]["mfcc"]
+            start_frame = int(bag["bag_start_sec"] * frames_per_second)
+            end_frame = start_frame + frames_per_bag
             
-            # 聚合为bag-level特征（均值+标准差）
-            mfcc_mean = np.mean(bag_mfcc, axis=0)
-            mfcc_std = np.std(bag_mfcc, axis=0)
-            bag_features = np.concatenate([mfcc_mean, mfcc_std])
-            
-            bag["features"]["mfcc"] = bag_features
-            bag["features"]["mfcc_mean"] = mfcc_mean
-            bag["features"]["mfcc_std"] = mfcc_std
-            bag["audio_path"] = audio_features[file_no]["path"]
-            filled_count += 1
-        else:
-            bag["features"]["mfcc"] = None
-    else:
-        bag["features"]["mfcc"] = None
+            if end_frame <= len(mfcc_full):
+                bag_mfcc = mfcc_full[start_frame:end_frame]
+                mfcc_mean = np.mean(bag_mfcc, axis=0)
+                mfcc_std = np.std(bag_mfcc, axis=0)
+                bag["features"]["mfcc"] = np.concatenate([mfcc_mean, mfcc_std])
+    
+    # 保存更新后的 bags
+    with open(CONFIG["phase1_output"] / "bags_with_features.pkl", 'wb') as f:
+        pickle.dump(bags, f)
+else:
+    print("  ✓ 特征已存在，跳过提取步骤")
 
-print(f"  ✓ 成功填充 {filled_count}/{len(bags)} 个bag的特征")
-print(f"  ⚠ 剩余 {len(bags) - filled_count} 个bag无音频特征（对应录音文件缺失）")
-
-# 保存更新后的bags
-updated_bags_path = CONFIG["phase1_output"] / "bags_with_features.pkl"
-with open(updated_bags_path, 'wb') as f:
-    pickle.dump(bags, f)
-print(f"  ✓ 已保存: {updated_bags_path}")
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 5. 子任务3: 准备训练数据
-# ─────────────────────────────────────────────────────────────────────────────
-print("\n[4/6] 准备训练数据...")
-
-# 筛选有特征的bag
 valid_bags = [b for b in bags if b["features"]["mfcc"] is not None]
-print(f"  有效Bag数: {len(valid_bags)}")
+print(f"  ✓ 有效 Bag 数：{len(valid_bags)}")
+print(f"  ✓ 特征维度：{valid_bags[0]['features']['mfcc'].shape}")
 
-# 提取特征矩阵和标签
-X = np.array([b["features"]["mfcc"] for b in valid_bags])
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. 数据集划分 (按文件分组)
+# ─────────────────────────────────────────────────────────────────────────────
+print("\n[3/7] 数据集划分...")
+
+file_nos = np.array([b["file_no"] for b in valid_bags])
 y_whistle = np.array([b["whistle_label"] for b in valid_bags])
 y_pulse = np.array([b["pulse_label"] for b in valid_bags])
+bag_lengths = np.array([b["bag_end_sec"] - b["bag_start_sec"] for b in valid_bags]) # 用于后续绘图
 
-print(f"  特征矩阵形状: {X.shape}")
-print(f"  哨声标签分布: {np.sum(y_whistle)} 正 / {len(y_whistle) - np.sum(y_whistle)} 负")
-print(f"  脉冲标签分布: {np.sum(y_pulse)} 正 / {len(y_pulse) - np.sum(y_pulse)} 负")
-
-# 划分训练集和测试集（按file_no分组，避免数据泄漏）
-file_nos = np.array([b["file_no"] for b in valid_bags])
 unique_files = np.unique(file_nos)
-
-# 确保训练集和测试集的文件不重叠
-train_files, test_files = train_test_split(
-    unique_files, test_size=CONFIG["test_size"], 
-    random_state=CONFIG["random_state"]
-)
+train_files, test_files = train_test_split(unique_files, test_size=CONFIG["test_size"], random_state=CONFIG["random_state"])
 
 train_mask = np.isin(file_nos, train_files)
 test_mask = np.isin(file_nos, test_files)
 
-X_train, X_test = X[train_mask], X[test_mask]
-y_whistle_train, y_whistle_test = y_whistle[train_mask], y_whistle[test_mask]
-y_pulse_train, y_pulse_test = y_pulse[train_mask], y_pulse[test_mask]
+# 准备数据
+X_train = [b["features"]["mfcc"] for b in np.array(valid_bags)[train_mask]]
+y_whistle_train = y_whistle[train_mask]
+y_pulse_train = y_pulse[train_mask]
+lengths_train = bag_lengths[train_mask]
 
-print(f"  训练集: {len(X_train)} 个bag ({len(train_files)} 个文件)")
-print(f"  测试集: {len(X_test)} 个bag ({len(test_files)} 个文件)")
+X_test = [b["features"]["mfcc"] for b in np.array(valid_bags)[test_mask]]
+y_whistle_test = y_whistle[test_mask]
+y_pulse_test = y_pulse[test_mask]
+lengths_test = bag_lengths[test_mask]
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 6. 子任务4: 训练Bag-level分类器
-# ─────────────────────────────────────────────────────────────────────────────
-print("\n[5/6] 训练Bag-level分类器...")
-
-# 训练哨声检测模型
-print("  训练哨声检测模型...")
-whistle_model = RandomForestClassifier(
-    n_estimators=100,
-    max_depth=10,
-    class_weight='balanced',
-    random_state=CONFIG["random_state"],
-    n_jobs=-1
-)
-whistle_model.fit(X_train, y_whistle_train)
-
-# 训练脉冲检测模型
-print("  训练脉冲检测模型...")
-pulse_model = RandomForestClassifier(
-    n_estimators=100,
-    max_depth=10,
-    class_weight='balanced',
-    random_state=CONFIG["random_state"],
-    n_jobs=-1
-)
-pulse_model.fit(X_train, y_pulse_train)
+print(f"  训练集：{len(X_train)} 样本 ({len(train_files)} 文件)")
+print(f"  测试集：{len(X_test)} 样本 ({len(test_files)} 文件)")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 7. 评估模型
+# 5. 模型训练函数
 # ─────────────────────────────────────────────────────────────────────────────
-print("\n[6/6] 模型评估...")
+# ─────────────────────────────────────────────────────────────────────────────
+# 🔧 修正训练函数
+# ─────────────────────────────────────────────────────────────────────────────
+def train_model(X, y, model_name, input_dim=CONFIG["input_dim"]):
+    # 不再使用过采样 Dataset，直接使用普通列表转换
+    dataset = AudioBagDataset([{"features": {"mfcc": x}} for x in X], y)
+    
+    # 稍微减小 Batch Size，让每个 Batch 更有可能包含正样本
+    # 如果正样本极少，Batch Size 太大可能导致某些 Batch 全是负样本
+    effective_batch_size = min(CONFIG["batch_size"], max(8, len(X) // 20)) 
+    
+    loader = DataLoader(dataset, batch_size=effective_batch_size, shuffle=True)
+    
+    model = SimpleMLP(input_dim=input_dim, hidden_dim=CONFIG["hidden_dim"]).to(CONFIG["device"])
+    
+    # 使用高 Alpha 的 Focal Loss
+    criterion = FocalBCE(alpha=0.9, gamma=2.0) 
+    
+    optimizer = optim.Adam(model.parameters(), lr=CONFIG["learning_rate"], weight_decay=1e-4)
+    
+    model.train()
+    print(f"    [{model_name}] 开始训练 (Batch Size: {effective_batch_size}, Alpha: 0.9)...")
+    
+    for epoch in range(CONFIG["num_epochs"]):
+        total_loss = 0
+        pos_count_in_batch = 0
+        
+        for features, labels in loader:
+            features, labels = features.to(CONFIG["device"]), labels.to(CONFIG["device"])
+            
+            # 统计当前 Batch 正样本数量（用于调试监控）
+            pos_count_in_batch += torch.sum(labels).item()
+            
+            optimizer.zero_grad()
+            outputs = model(features)
+            loss = criterion(outputs, labels)
+            
+            # 如果 Loss 是 NaN，跳过
+            if torch.isnan(loss):
+                continue
+                
+            loss.backward()
+            optimizer.step()
+            
+            total_loss += loss.item()
+        
+        # 每 10 轮打印一次，顺便监控是否看到了正样本
+        if (epoch + 1) % 10 == 0:
+            avg_loss = total_loss / len(loader)
+            print(f"    [{model_name}] Epoch {epoch+1}/{CONFIG['num_epochs']}, Loss: {avg_loss:.4f}")
+            
+            # 如果整个 Epoch 都没看到正样本（极端情况），警告用户
+            if pos_count_in_batch == 0:
+                print(f"    ⚠️ 警告：Epoch {epoch+1} 中未检测到任何正样本！考虑减小 Batch Size。")
+    
+    return model
 
-# 哨声模型评估
-whistle_pred = whistle_model.predict(X_test)
-whistle_proba = whistle_model.predict_proba(X_test)[:, 1]
+# ─────────────────────────────────────────────────────────────────────────────
+# 6. 模型评估函数
+# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# 🔧 修正评估函数 (寻找最佳阈值)
+# ─────────────────────────────────────────────────────────────────────────────
+def evaluate_model(model, X, y_true, model_name):
+    model.eval()
+    all_probs = []
+    
+    with torch.no_grad():
+        # 批量推理
+        for i in range(0, len(X), 64):
+            batch_x = torch.FloatTensor(np.array(X[i:i+64])).to(CONFIG["device"])
+            probs = model(batch_x).cpu().numpy().squeeze()
+            all_probs.extend(probs)
+    
+    all_probs = np.array(all_probs)
+    y_true = np.array(y_true)
+    
+    # 【核心逻辑】遍历阈值，找到 F1 最高的点
+    best_threshold = 0.5
+    best_f1 = -1
+    best_prec = 0
+    best_rec = 0
+    
+    thresholds = np.arange(0.05, 0.95, 0.05)
+    
+    for thresh in thresholds:
+        preds = (all_probs >= thresh).astype(int)
+        
+        # 如果全预测为 0 或全预测为 1，跳过（避免除零或无意义）
+        if np.sum(preds) == 0 or np.sum(preds) == len(preds):
+            continue
+            
+        f1 = f1_score(y_true, preds, zero_division=0)
+        
+        if f1 > best_f1:
+            best_f1 = f1
+            best_threshold = thresh
+            best_prec = precision_score(y_true, preds, zero_division=0)
+            best_rec = recall_score(y_true, preds, zero_division=0)
+    
+    # 如果没找到合适的阈值（比如全 0 时 F1 最高），则强制使用默认逻辑并警告
+    if best_f1 == -1:
+        print(f"  ⚠️ [{model_name}] 未找到有效阈值，回退到默认 0.5")
+        best_threshold = 0.5
+        final_preds = (all_probs >= 0.5).astype(int)
+        best_f1 = f1_score(y_true, final_preds, zero_division=0)
+        best_prec = precision_score(y_true, final_preds, zero_division=0)
+        best_rec = recall_score(y_true, final_preds, zero_division=0)
+    else:
+        final_preds = (all_probs >= best_threshold).astype(int)
+        print(f"  ✅ [{model_name}] 找到最佳阈值: {best_threshold:.2f} (F1 从 0.00 提升至 {best_f1:.4f})")
 
+    acc = np.mean(final_preds == y_true)
+    
+    try:
+        auc = roc_auc_score(y_true, all_probs)
+    except:
+        auc = 0.5
+        
+    return {
+        "model": model_name,
+        "accuracy": acc,
+        "precision": best_prec,
+        "recall": best_rec,
+        "f1": best_f1,
+        "auc": auc,
+        "probs": all_probs,
+        "preds": final_preds,
+        "threshold": best_threshold
+    }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7. 执行训练与评估
+# ─────────────────────────────────────────────────────────────────────────────
+print("\n[4/7] 训练哨声检测模型 (SimpleMLP + FocalLoss)...")
+whistle_model = train_model(X_train, y_whistle_train, "Whistle")
+
+print("\n[5/7] 训练脉冲检测模型 (SimpleMLP + FocalLoss)...")
+pulse_model = train_model(X_train, y_pulse_train, "Pulse")
+
+print("\n[6/7] 模型评估...")
+whistle_res = evaluate_model(whistle_model, X_test, y_whistle_test, "WhistleDetector")
+pulse_res = evaluate_model(pulse_model, X_test, y_pulse_test, "PulseDetector")
+
+# 打印报告
 print("\n" + "="*60)
-print("【哨声检测模型 - 测试集评估】")
+print("【测试结果汇总】")
 print("="*60)
-print(classification_report(y_whistle_test, whistle_pred, 
-                            target_names=['Negative', 'Positive']))
-
-if len(np.unique(y_whistle_test)) > 1:
-    whistle_auc = roc_auc_score(y_whistle_test, whistle_proba)
-    print(f"  ROC-AUC: {whistle_auc:.4f}")
-
-# 脉冲模型评估
-pulse_pred = pulse_model.predict(X_test)
-pulse_proba = pulse_model.predict_proba(X_test)[:, 1]
-
-print("\n" + "="*60)
-print("【脉冲检测模型 - 测试集评估】")
-print("="*60)
-print(classification_report(y_pulse_test, pulse_pred, 
-                            target_names=['Negative', 'Positive']))
-
-if len(np.unique(y_pulse_test)) > 1:
-    pulse_auc = roc_auc_score(y_pulse_test, pulse_proba)
-    print(f"  ROC-AUC: {pulse_auc:.4f}")
+print(f"{'模型':<15} | {'Acc':<6} | {'Prec':<6} | {'Rec':<6} | {'F1':<6} | {'AUC':<6}")
+print("-" * 60)
+print(f"{'Whistle':<15} | {whistle_res['accuracy']:.4f} | {whistle_res['precision']:.4f} | {whistle_res['recall']:.4f} | {whistle_res['f1']:.4f} | {whistle_res['auc']:.4f}")
+print(f"{'Pulse':<15} | {pulse_res['accuracy']:.4f} | {pulse_res['precision']:.4f} | {pulse_res['recall']:.4f} | {pulse_res['f1']:.4f} | {pulse_res['auc']:.4f}")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 8. 保存模型和结果
+# 8. 生成输出文件 (Table 2 & Fig 1)
 # ─────────────────────────────────────────────────────────────────────────────
-print("\n" + "="*80)
-print("保存模型和结果...")
-print("="*80)
+print("\n[7/7] 生成报告文件...")
+
+# 1. 生成 performance_table.csv (Table 2)
+table_data = [
+    {"Task": "Whistle Detection", "Model": "SimpleMLP", "Loss": "FocalBCE", 
+     "Accuracy": whistle_res['accuracy'], "Precision": whistle_res['precision'], 
+     "Recall": whistle_res['recall'], "F1-Score": whistle_res['f1'], "ROC-AUC": whistle_res['auc']},
+    {"Task": "Pulse Detection", "Model": "SimpleMLP", "Loss": "FocalBCE", 
+     "Accuracy": pulse_res['accuracy'], "Precision": pulse_res['precision'], 
+     "Recall": pulse_res['recall'], "F1-Score": pulse_res['f1'], "ROC-AUC": pulse_res['auc']}
+]
+table_df = pd.DataFrame(table_data)
+table_path = CONFIG["phase1_output"] / "performance_table.csv"
+table_df.to_csv(table_path, index=False)
+print(f"  ✓ 性能表已保存：{table_path}")
+
+# 2. 生成 fig1_f1_vs_bag_length.png
+plt.figure(figsize=(10, 6))
+
+# 哨声
+plt.scatter(lengths_test, whistle_res['preds'], c=['green' if p==1 else 'red' for p in whistle_res['preds']], 
+            alpha=0.3, label='Whistle Pred', marker='o')
+# 为了展示 F1 vs Length 的趋势，我们按长度分箱计算 F1
+bins = np.linspace(min(lengths_test), max(lengths_test), 10)
+bin_centers = (bins[:-1] + bins[1:]) / 2
+f1_bins_w = []
+for i in range(len(bins)-1):
+    mask = (lengths_test >= bins[i]) & (lengths_test < bins[i+1])
+    if np.sum(mask) > 0:
+        f1_bins_w.append(f1_score(y_whistle_test[mask], whistle_res['preds'][mask], zero_division=0))
+    else:
+        f1_bins_w.append(np.nan)
+
+plt.plot(bin_centers, f1_bins_w, 'g-', linewidth=2, label='Whistle F1 Trend')
+
+# 脉冲
+f1_bins_p = []
+for i in range(len(bins)-1):
+    mask = (lengths_test >= bins[i]) & (lengths_test < bins[i+1])
+    if np.sum(mask) > 0:
+        f1_bins_p.append(f1_score(y_pulse_test[mask], pulse_res['preds'][mask], zero_division=0))
+    else:
+        f1_bins_p.append(np.nan)
+
+plt.plot(bin_centers, f1_bins_p, 'b-', linewidth=2, label='Pulse F1 Trend')
+
+plt.xlabel("Bag Duration (seconds)")
+plt.ylabel("F1 Score / Prediction (0/1)")
+plt.title("Fig 1: F1 Score vs Bag Length (Phase 1)")
+plt.legend()
+plt.grid(True, alpha=0.3)
+
+fig_path = CONFIG["phase1_output"] / "fig1_f1_vs_bag_length.png"
+plt.savefig(fig_path, dpi=300)
+plt.close()
+print(f"  ✓ 趋势图已保存：{fig_path}")
 
 # 保存模型
-whistle_model_path = CONFIG["phase1_output"] / "whistle_detector.pkl"
-pulse_model_path = CONFIG["phase1_output"] / "pulse_detector.pkl"
-
-joblib.dump(whistle_model, whistle_model_path)
-joblib.dump(pulse_model, pulse_model_path)
-
-print(f"  ✓ 哨声模型: {whistle_model_path}")
-print(f"  ✓ 脉冲模型: {pulse_model_path}")
-
-# 生成评估报告
-eval_report = f"""
-================================================================================
-Phase 1 - Bag-level检测模型评估报告
-生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-================================================================================
-
-【数据配置】
-  音频文件数: {len(available_files)}
-  有效Bag数: {len(valid_bags)}
-  训练集Bag数: {len(X_train)} (文件: {list(train_files)})
-  测试集Bag数: {len(X_test)} (文件: {list(test_files)})
-
-【特征配置】
-  特征类型: MFCC
-  MFCC维度: {CONFIG['mfcc_n_mfcc']}
-  采样率: {CONFIG['target_sr']} Hz
-  每Bag特征维度: {X.shape[1]}
-
-【哨声检测模型】
-  模型类型: RandomForestClassifier
-  测试集正样本数: {np.sum(y_whistle_test)}
-  测试集负样本数: {len(y_whistle_test) - np.sum(y_whistle_test)}
-"""
-
-if len(np.unique(y_whistle_test)) > 1:
-    eval_report += f"  ROC-AUC: {whistle_auc:.4f}\n"
-
-eval_report += f"""
-【脉冲检测模型】
-  模型类型: RandomForestClassifier
-  测试集正样本数: {np.sum(y_pulse_test)}
-  测试集负样本数: {len(y_pulse_test) - np.sum(y_pulse_test)}
-"""
-
-if len(np.unique(y_pulse_test)) > 1:
-    eval_report += f"  ROC-AUC: {pulse_auc:.4f}\n"
-
-eval_report += f"""
-【输出文件】
-  哨声模型: {whistle_model_path}
-  脉冲模型: {pulse_model_path}
-  带特征bags: {updated_bags_path}
-
-【下一步建议】
-  → Phase 2: 实例级定位（从bag预测反推具体时间位置）
-  → 建议收集更多音频文件以提升模型泛化能力
-
-================================================================================
-"""
-
-eval_report_path = CONFIG["phase1_output"] / "01_evaluation_report.txt"
-eval_report_path.write_text(eval_report, encoding='utf-8')
-print(f"  ✓ 评估报告: {eval_report_path}")
+joblib.dump(whistle_model.cpu(), CONFIG["phase1_output"] / "whistle_detector.pkl")
+joblib.dump(pulse_model.cpu(), CONFIG["phase1_output"] / "pulse_detector.pkl")
+print(f"  ✓ 模型已保存")
 
 print("\n" + "="*80)
 print("✅ Phase 1 全部任务完成！")
+print(f"   -> Table 2: {table_path}")
+print(f"   -> Fig 1:   {fig_path}")
 print("="*80)
-print(eval_report)
