@@ -1,4 +1,5 @@
 
+
 # skill.md - CWD-MIL Hierarchical Weakly-Supervised Framework
 
 **作者**：Grok（基于用户需求与Fu et al. 2025数据集）  
@@ -21,6 +22,9 @@ data/
 ├── BuzzTrains.csv                   # Buzz脉冲串实例级标注
 └── Results.csv                      # 35条录音摘要（水深、群大小、行为、Pulse_train_num、Whistle_num）
 
+**关键音频参数**（已确认）：
+- 原始采样率：576 kHz（单声道 mono）
+- 处理时统一下采样到48 kHz（防止计算复杂度过高，configs/default.yaml中可配置）
 
 **弱标签生成规则**（Phase 0核心）：
 - whistle_label = 1 if 该bag内存在任何哨声（通过Whistle Begins时间判断） else 0
@@ -30,7 +34,7 @@ data/
 
 ## 2. 整体Pipeline（6个Phase递进式开发）
 
-```mermaid
+mermaid
 flowchart TD
     A[data/original_audio + 4个CSV] --> B[Phase0: Bag生成 + 弱标签]
     B --> C[Phase1: 基础Bag检测]
@@ -39,13 +43,13 @@ flowchart TD
     E --> F[Phase4: 元数据融合 + 行为洞见]
     F --> G[Phase5: 完整4-loss + 最终评估]
     G --> H[Phase6: GitHub打包 + 论文材料]
-```
+
 
 ## 3. 每个Phase详细规范（输入/输出/模块）
 
 ### Phase 0: 数据准备（必须先跑）
 **输入**：
-- data/original_audio/*.wav（Ori_Recording_01.wav 等）
+- data/original_audio/*.wav（Ori_Recording_01.wav 等，576 kHz单声道）
 - WhistleParameters-clean.csv
 - ClickTrains.csv
 - BurstPulseTrains.csv
@@ -53,76 +57,61 @@ flowchart TD
 - Results.csv
 
 **输出**：
-- `data/bags.pkl`（list of dict：{'bag_id', 'instances': tensor[M, feat_dim], 'label': [whistle, pulse], 'meta': {...}, 'start_time', 'end_time'})
+- `data/bags.pkl`（list of dict：{'bag_id', 'instances': tensor[M, 522], 'label': [whistle, pulse], 'meta': {...}, 'start_time', 'end_time'})
 - `results/phase0/dataset_summary.csv`（Table 1：总哨声100、高质量100、clicks832、burst15、buzz50、水深范围、行为分布）
+- `results/phase0/dataset_report.txt`
 
-**所需模块**：
-1. `scripts/prepare_bags.py`  
-   - 输入：data/ 下所有文件路径  
-   - 输出：bags.pkl + summary.csv  
-   - 逻辑：读取Results.csv → 按Ori_file_num匹配CSV → 切60-300s bag → 生成弱标签 → 保存
-
-2. `src/dataset.py`（CWDMILBagDataset类）  
-   - 输入：bags_pkl_path  
-   - 输出：features [M, feat_dim], label [2], meta_dict, bag_id
+- **核心逻辑**：读取配置，遍历所有原始音频和标注CSV文件。对每个音频文件，先下采样，再按固定时长（如10秒）切分为实例。然后基于标注的时间戳，为每个bag（由多个连续实例组成）生成弱监督标签（是否有哨声/脉冲）。最后提取522维特征并保存到`bags.pkl`。同时生成数据摘要。
 
 ### Phase 1: 基础Bag-level检测
-**输入**：Phase0的bags.pkl  
+**输入**：Phase0的bags.pkl
 **输出**：
 - `results/phase1/performance_table.csv`（Table 2）
 - `results/phase1/fig1_f1_vs_bag_length.png`
+- `results/phase1/baglevel_report.txt`
+- **核心逻辑**：加载`bags.pkl`，根据配置（是否交叉验证）划分训练/验证/测试集。初始化`SimpleMLP`模型，使用`FocalBCE`损失，进行模型训练与验证。最后在测试集上评估袋级别检测性能（F1, Precision, Recall），并绘制结果图表。
 
-**模块**：
-- `src/model.py`：SimpleMLP（无attention）
-- `src/loss.py`：FocalBCE
-- `src/train.py --phase 1`
 
 ### Phase 2: Instance-level Attention定位
-**输入**：Phase0 bags  
+**输入**：Phase0 bags
 **输出**：
 - `results/phase2/localization_table.csv`（Table 3）
 - `results/phase2/fig2_attention_heatmap_examples.png`
+- `results/phase2/instancelevel_report.txt`
 
-**模块新增**：
-- `src/model.py`：加AttentionModule（alphas = softmax(v^T tanh(W·feat))）
-- `src/loss.py`：加sparsity_loss + temporal_smoothness_loss
-- `src/train.py --phase 2`
+**脚本核心逻辑**：在Phase1数据集划分基础上，训练带`AttentionModule`的模型。总损失包含bag级别的`FocalBCE`和instance级别的`sparsity_loss` + `temporal_smoothness_loss`。训练后，通过分析高权重的实例，将其中心时间与真实标注时间戳比对（容忍2秒误差），计算定位精度，并可视化注意力热图。
+
 
 ### Phase 3: 分层类型细分
-**输入**：Phase0 + WhistleParameters-clean.csv（Type列）+ Pulse trains子类  
+**输入**：Phase0 + WhistleParameters-clean.csv（Type列）+ Pulse trains子类
 **输出**：
 - `results/phase3/type_performance.csv`（Table 4）
 - `results/phase3/confusion_matrix.png`（Figure 3）
 - `results/phase3/ablation_table.csv`（Table 5）
+- `results/phase3/performance_report.txt`
 
-**模块新增**：
-- `src/model.py`：加type_head（哨声6类softmax + 脉冲3类softmax）
-- `src/loss.py`：加type_focal_loss + class_weight
-- `src/train.py --phase 3`
+**脚本核心逻辑**：扩展模型，增加用于哨声6分类和脉冲3分类的`type_head`。在训练时，对于已知存在信号类型的bag，其内部实例的类型伪标签用于计算`type_focal_loss`（采用类别权重）。评估时，在定位出的实例上评估细分类别精度，并进行消融实验（如关闭类型头训练）。
+
 
 ### Phase 4: 元数据融合（行为洞见）
-**输入**：Results.csv（水深/群大小/行为）  
+**输入**：Results.csv（水深/群大小/行为）
 **输出**：
 - `results/phase4/behavior_correlation.png`（Figure 4）
 - `results/phase4/density_trend.csv`（Table 6）
+- `results/phase4/fusion_report.txt`
 
-**模块新增**：
-- `src/dataset.py`：MetadataEmbedder（MLP）
-- `src/model.py`：bag_input = audio_emb + meta_emb
-- `scripts/behavior_analysis.py`
+**脚本核心逻辑**：在数据集中集成`MetadataEmbedder`，将元数据（水深、群大小、季节、行为类别）映射为32维向量，与音频特征拼接后输入模型。训练融合模型后，运行`scripts/behavior_analysis.py`分析模型预测（如信号检出率、类型分布）与不同行为、水深等元数据的相关性，并可视化。
+
 
 ### Phase 5: 完整损失 + 最终评估
-**输入**：前5个Phase模型  
+**输入**：前4个Phase模型
 **输出**：
 - `results/phase5/final_summary.csv`（Table 7）
 - `results/phase5/loss_curves.png`（Figure 5）
+- `results/phase5/evaluation_report.txt`
 
-**模块**：
-- `src/loss.py`：完整4-loss  
-  ```python
-  total = focal_bce + 0.1*sparsity + 0.05*temporal + 0.01*consistency + λ_type*type_loss
-  ```
-- `src/evaluate.py`：统一评估所有指标
+**脚本核心逻辑**：使用完整的4-loss组合（bag-level FocalBCE + instance-level 稀疏/平滑损失 + 类型损失）训练最终模型。在独立的测试集上进行综合评估，包括袋级别检测、时序定位精度、类型细分精度，并汇总所有Phase的关键指标，生成最终报告。
+
 
 ### Phase 6: GitHub打包
 **输出**：
@@ -130,34 +119,69 @@ flowchart TD
 - `README.md`（一键复现 + 论文图表说明）
 - `Supplementary_Table_S1.csv`
 
-## 4. 代码模块输入输出规范（完整列表）
+## 4. 关键技术细节（已固定，不可随意更改）
+- **包（bag）定义**固定1min非重叠音频片段
+- **实例（Instance）定义**：固定10秒非重叠音频片段（可在configs/default.yaml中调整为5–15秒）。每个bag（1min）按此长度均匀切分，每个实例对应连续的10秒时间窗口。
+- **特征维度（feat_dim）**：522维。在Phase 0的prepare_bags.py中一次性提取并保存到bags.pkl，包括128维Mel频谱图（20Hz–150kHz，下采样后48kHz处理）的mean/std/max/min四个统计值（共512维） + 10个时间域统计特征（RMS、ZCR、PeakAmp、Mean_IPI、TEKO均值、FDR均值、EnvStats均值/方差、TempCentroid等）。
+- **AttentionModule**：经典MIL注意力结构，W为[522, 128]可学习矩阵，v为[128]向量，通过v^T * tanh(W * feat + b)计算分数后softmax得到alphas。
+- **SimpleMLP特征提取器**：3层全连接层，每层隐藏单元256 + ReLU激活。
+- **MetadataEmbedder**：两层MLP，将水深/群大小/季节/行为4个标量映射到32维嵌入后与音频特征拼接。
+- **数据分割**：严格按Ori_file_num（35个.wav文件，每个文件30mins）划分，70%训练 / 15%验证 / 15%测试，确保同一录音的所有bag只出现在同一个集合中（blocked CV）。当启用k折交叉验证时，按录音文件分组进行k折划分。
+- **Localization precision**：每个高attention权重的10秒实例中心时间与真实标注（Whistle Begins / Train_start）比较，绝对差≤2秒视为正确匹配，precision = 正确匹配数 / 总预测检测数。Phase 2评估完全在时间戳级别（实例开始时间 + 偏移）。
+- **超参数（固定默认值，可通过configs/default.yaml微调）**：
+  - 初始学习率：1e-4
+  - 优化器：AdamW（weight_decay=0.01，gradient_clip=1.0）
+  - Batch Size：32（RTX 4060稳定）
+  - Epochs：80 + 早停（patience=15）
+  - Focal Loss：gamma=2.0，alpha=0.25
 
-### src/dataset.py
-- 输入：bags_pkl_path  
-- 输出：DataLoader返回 (features, label[2], meta_dict, bag_id)
+## 5. 配置管理（configs/default.yaml）
 
-### src/model.py
-- 输入：bag_instances [M, feat_dim]  
-- 输出：existence_pred[2], type_pred, alphas（定位权重）
+所有可调参数统一放在configs/default.yaml中（Phase 0开始读取）：
+```yaml
+data:
+  root: "data"
+  original_audio_dir: "original_audio"
+  downsample_rate: 48000          # ← 新增：强制下采样到48kHz
+  instance_duration_sec: 10       # 可调5-15
+  bag_duration_target_sec: 180
+  bag_hop_sec: 60
 
-### src/loss.py
-- 输入：pred, target, alphas  
-- 输出：scalar loss
+model:
+  feat_dim: 522
+  hidden_dim: 256
+  meta_embed_dim: 32
+  attention_hidden: 128
 
-### src/train.py
-- 输入：--phase 1~5  
-- 输出：model.pt + results/phaseX/所有csv/png
+train:
+  lr: 0.0001
+  optimizer: "AdamW"
+  weight_decay: 0.01
+  batch_size: 32
+  epochs: 80
+  early_stop_patience: 15
+  focal_gamma: 2.0
+  focal_alpha: 0.25
+  localization_tolerance_sec: 2.0
+  # --- 新增：实验配置接口 ---
+  cross_validation: false         # true: 进行k折交叉验证 | false: 使用固定70/15/15划分
+  n_folds: 10                     # 交叉验证折数
 
-### scripts/prepare_bags.py
-- 输入：data/ 下所有文件路径  
-- 输出：data/bags.pkl + results/phase0/summary.csv
-
-## 5. GitHub仓库完整结构（必须严格遵守）
-
+phase:
+  current: 0
 ```
-CWD-MIL-Detection/
+
+## 6. 代码模块输入输出规范（完整列表）
+
+### 编码规范
+实现各模块代码时，应遵循简洁、高效的原则，避免冗余代码和复杂嵌套，确保逻辑清晰。并告诉我如何运行。
+
+## 7. GitHub仓库完整结构（必须严格遵守）
+项目根目录：D:\Project_Github\audio_click_mil
+
+audio_click_mil/
 ├── configs/
-│   ├── default.yaml
+│   └── default.yaml
 ├── data/
 │   ├── original_audio/              # ← 必须放入所有Ori_Recording_*.wav
 │   ├── WhistleParameters-clean.csv
@@ -169,233 +193,97 @@ CWD-MIL-Detection/
 │   ├── dataset.py
 │   ├── model.py
 │   ├── loss.py
-│   ├── train.py
-│   └── evaluate.py
+│   └── evaluate.py           # 评估函数库
 ├── scripts/
-│   ├── prepare_bags.py
-│   └── behavior_analysis.py
+│   ├── prepare_bags.py        # Phase 0
+│   ├── phase1_baseline.py     # Phase 1
+│   ├── phase2_attention_loc.py # Phase 2
+│   ├── phase3_type_finegrained.py # Phase 3
+│   ├── phase4_metadata_fusion.py  # Phase 4
+│   ├── phase5_full_model.py    # Phase 5
+│   └── behavior_analysis.py    # 辅助分析
 ├── notebooks/
-│   ├── Phase0_DataPrep.ipynb
-│   ├── Phase1_Baseline.ipynb
-│   ├── Full_Experiment.ipynb
-│   └── ……
+│   ├── Phase0_DataPrep.ipynb   # 用于数据探索和特征可视化
+│   ├── Phase1_Baseline.ipynb   # 用于基线结果分析和调试
+│   └── Full_Experiment.ipynb   # 用于最终结果整合与高级可视化
 ├── results/                         # 所有Phase输出
 ├── README.md                        # 一键复现 + 论文图表映射
 ├── requirements.txt
 ├── .gitignore
 └── skill.md                         # 本文件（LLM理解文档）
-```
 
-## 6. 运行命令（一键复现）
 
-```bash
-# Phase 0（必须先跑）
+## 8. 运行命令（一键复现）
+
+bash
+Phase 0（必须先跑）：数据预处理与特征提取
+
 python scripts/prepare_bags.py
 
-# 后续Phase（依次）
-python src/train.py --phase 1
-python src/train.py --phase 2
-python src/train.py --phase 3
-python src/train.py --phase 4
-python src/train.py --phase 5
-```
+Phase 1-5（可按需运行，也可按顺序全部运行以复现完整实验）
 
-## 7. 论文图表映射（直接复制）
+python scripts/phase1_baseline.py
+python scripts/phase2_attention_loc.py
+python scripts/phase3_type_finegrained.py
+python scripts/phase4_metadata_fusion.py
+python scripts/phase5_full_model.py
 
-- Table 1 ← Phase0 summary.csv  
-- Figure 1 ← Phase1  
-- Figure 2 ← Phase2  
-- Table 5（消融）← Phase3  
-- Figure 4（行为）← Phase4  
+启用10折交叉验证运行某个Phase（需在configs/default.yaml中设置 cross_validation: true）
+
+python scripts/phase1_baseline.py
+
+
+## 9. 论文图表映射（直接复制）
+
+- Table 1 ← Phase0 summary.csv
+- Figure 1 ← Phase1
+- Figure 2 ← Phase2
+- Table 5（消融）← Phase3
+- Figure 4（行为）← Phase4
 - Table 7（最终）← Phase5
 
 
+## CSV 数据结构示例（关键列 + 真实样例行）
 
-****
+**Results.csv**（35条录音摘要）
+关键列：Data (YYYY-MM-DD), Season, Original audio_file (No.), Start time, End time, Pulse_train_num, Whistle_num, Water Depth (m), Dolphin group size, Dolphin Behavior
+样例行：
 
-
-**任务要求**
-#### 请根据以上内容，了解项目整体情况，同时阅读附件.csv文件，理解数据结构。接下来，你将作为一个项目导师，精通代码与论文写作，帮我从Phase 0 开始，将每一个Phase的任务都划分到最小具体任务，指导我完成每一个小任务。方便我理解。notebooks中可以指导我进行必要的实验尝试，但最后完整代码都要写到脚本中。default.yaml中也要写入必要的配置。项目根目录为：D:\Project_Github\audio_click_mil，请保持代码的精简，不要有过多的冗余，每一个大循环、函数、条件都要有明确的注释。
-
-回答示例：
-```
-好的，我们现在正式开始 **Phase 0** 的指导。
-
-Phase 0 是整个项目最关键的基石。它的质量直接决定后续所有弱监督训练是否可信。
-
-### Phase 0 可以拆解成以下最小任务（建议按顺序完成）
-
-1. **确认数据文件完整性 + 初步统计概览**  
-   （先跑这一步，排除最基本的文件损坏/列名不一致问题）
-
-2. **设计 bag 的切分策略**（时长、是否允许重叠、如何编号）
-
-3. **编写 prepare_bags.py 主逻辑框架**（读取所有 csv、不读 wav 文件内容）
-
-4. **实现弱标签生成规则**（whistle_label / pulse_label）
-
-5. **实现单条录音 → 多个 bag 的切分 + 标签分配逻辑**
-
-6. **把每条原始标注（whistle/click/burst/buzz）分配到对应 bag 中**（用于后续评估定位精度）
-
-7. **构建 bag 的特征占位结构**（现在只占位，实际特征在 Phase 1 前补充）
-
-8. **保存 bags.pkl + 生成 phase0/dataset_summary.csv**
-
-9. **（可选进阶）在 notebook 中可视化几个 bag 的时间轴分布，检查切分合理性**
-
-我们从 **任务 1** 开始。
-
-──────────────────────────────
-
-**任务 1：确认数据文件完整性 + 初步统计概览**
-
-**这个模块的具体作用是**：  
-快速验证所有必须的文件都存在、列名符合预期、Ori_file_num 是否能匹配、Pulse_train_num / Whistle_num 是否与三个 pulse csv 的数量统计大致吻合，避免后续浪费时间在错误数据上。
-
-**输入**（命令行或硬编码路径皆可，先期建议硬编码）：
-- data/WhistleParameters-clean.csv
-- data/ClickTrains.csv
-- data/BurstPulseTrains.csv
-- data/BuzzTrains.csv
-- data/Results.csv
-
-**输出**（打印到终端 + 保存到 results/phase0/ 文件夹）：
-- results/phase0/00_file_integrity_check.txt
-- 控制台打印关键统计
-
-**新增的配置**（configs/default.yaml 新增字段，先写死也行）：
-```yaml
-phase0:
-  data_root: "data"
-  results_dir: "results/phase0"
-  csv_files:
-    whistle: "WhistleParameters-clean.csv"
-    click:   "ClickTrains.csv"
-    burst:   "BurstPulseTrains.csv"
-    buzz:    "BuzzTrains.csv"
-    summary: "Results.csv"
-  # 后续会加
-  bag_duration_target_sec: 120
-  bag_hop_sec: 60
-```
-
-**推荐的第一个代码文件**（可以放在 notebooks/ 先跑，也可直接写脚本）：
-
-** notebooks/Phase0_00_CheckData.ipynb **（或 scripts/check_data_integrity.py）
-
-```python
-# Phase 0 - Task 1: 数据完整性检查与基本统计
-import pandas as pd
-from pathlib import Path
-import yaml
-from datetime import datetime
-
-# ─── 1. 读取配置（未来统一从 yaml 读，现在先写死路径） ──────────────────────
-CONFIG = {
-    "data_root": "D:\Project_Github\audio_click_mil\data",
-    "output_dir": "results/phase0",
-    "csv_names": {
-        "whistle": "WhistleParameters-clean.csv",
-        "click":   "ClickTrains.csv",
-        "burst":   "BurstPulseTrains.csv",
-        "buzz":    "BuzzTrains.csv",
-        "results": "Results.csv",
-    }
-}
-
-output_dir = Path(CONFIG["output_dir"])
-output_dir.mkdir(exist_ok=True, parents=True)
-
-log_lines = [f"Phase 0 - 数据完整性检查 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"]
-
-# ─── 2. 检查文件是否存在 ──────────────────────────────────────────────────────
-missing = []
-for k, fname in CONFIG["csv_names"].items():
-    p = Path(CONFIG["data_root"]) / fname
-    if not p.exists():
-        missing.append(str(p))
-    else:
-        log_lines.append(f"✓ {fname} 存在")
-
-if missing:
-    log_lines.append("\n!!! 缺失以下文件，无法继续 !!!")
-    for m in missing:
-        log_lines.append(f"  {m}")
-    print("\n".join(log_lines))
-    (output_dir / "00_file_integrity_check.txt").write_text("\n".join(log_lines))
-    raise FileNotFoundError("关键 csv 文件缺失")
-
-log_lines.append("\n所有必须 csv 文件都存在 ✓\n")
-
-# ─── 3. 读取所有 csv ───────────────────────────────────────────────────────────
-whistle = pd.read_csv(Path(CONFIG["data_root"]) / CONFIG["csv_names"]["whistle"])
-click   = pd.read_csv(Path(CONFIG["data_root"]) / CONFIG["csv_names"]["click"])
-burst   = pd.read_csv(Path(CONFIG["data_root"]) / CONFIG["csv_names"]["burst"])
-buzz    = pd.read_csv(Path(CONFIG["data_root"]) / CONFIG["csv_names"]["buzz"])
-results = pd.read_csv(Path(CONFIG["data_root"]) / CONFIG["csv_names"]["results"])
-
-# ─── 4. 基本统计 ────────────────────────────────────────────────────────────────
-stats = []
-
-stats.append(f"哨声实例数量 (WhistleParameters-clean.csv) : {len(whistle):6d} 条")
-stats.append(f"Click train 数量                      : {len(click):6d} 条")
-stats.append(f"BurstPulse train 数量                 : {len(burst):6d} 条")
-stats.append(f"Buzz train 数量                       : {len(buzz):6d} 条")
-
-# Results.csv 中记录的总数（注意是字符串，需要解析）
-results["Pulse_train_num"] = results["Pulse_train_num"].astype(str)
-click_sum = 0; burst_sum = 0; buzz_sum = 0
-for v in results["Pulse_train_num"]:
-    if pd.isna(v): continue
-    v = v.replace("\n", " ").replace("  ", " ")
-    if "Click:" in v:
-        part = v.split("Click:")[1].split(";")[0].strip()
-        try: click_sum += int(part)
-        except: pass
-    if "BurstPulse:" in v:
-        part = v.split("BurstPulse:")[1].split(";")[0].strip()
-        try: burst_sum += int(part)
-        except: pass
-    if "Buzz:" in v:
-        part = v.split("Buzz:")[1].split(")")[0].strip()
-        try: buzz_sum += int(part)
-        except: pass
-
-stats.append(f"Results.csv 汇总的 Click 数量         : {click_sum:6d} 条")
-stats.append(f"Results.csv 汇总的 BurstPulse 数量    : {burst_sum:6d} 条")
-stats.append(f"Results.csv 汇总的 Buzz 数量          : {buzz_sum:6d} 条")
-
-# 文件编号匹配性
-ori_files_whistle = set(whistle["Original Audio File (No.)  "].dropna().astype(int))
-ori_files_click   = set(click["Ori_file_num(No.)"].dropna().astype(int))
-ori_files_results = set(results["Original audio_file (No.)"].dropna().astype(int))
-
-stats.append(f"\n哨声出现的录音文件数    : {len(ori_files_whistle)} 个")
-stats.append(f"Click 出现的录音文件数  : {len(ori_files_click)} 个")
-stats.append(f"Results.csv 总录音文件数: {len(ori_files_results)} 个")
-
-log_lines.extend(stats)
-
-# ─── 5. 保存日志 ────────────────────────────────────────────────────────────────
-log_path = output_dir / "00_file_integrity_check.txt"
-log_path.write_text("\n".join(log_lines),,encoding='utf-8')
-
-print("\n".join(log_lines))
-print(f"\n日志已保存至：{log_path}")
-```
-
-**下一步建议**：
-
-1. 先在 notebook 中运行上面代码（或改成 .py 脚本运行），确认输出是否合理。
-2. 把你得到的实际数字贴回来，尤其是：
-   - 五个 csv 的行数
-   - Results.csv 解析出来的 click/burst/buzz 总数 vs 三个 csv 的真实数量是否有明显差异
-
-确认这一步没有大问题后，我们再继续做 **任务 2 → bag 切分策略**。
-
-请执行后把结果反馈给我～
-```
+2022/6/20,Summer,1,9:59:58,10:29:57,"18 (Click:17; BurstPulse:1; Buzz:0)","1 (High quality:1)",13.9,5,Travelling
+2022/12/4,Winter,6,10:06:19,10:36:18,"104 (Click:57; BurstPulse:4; Buzz:43)","28 (High quality:19)",7.4,6,Travelling
 
 
+**WhistleParameters-clean.csv**（哨声实例级标注）
+关键列：Whistle Number, Original Audio File, Whistle Begins (s), Type（6类）, Quality Grade, Duration (ms), Start Frequency (kHz), End Frequency (kHz), ...
+样例行：
 
+1,1,1758.166,Sinusoidal,3,211.8,4.67,4.93,...
+5,5,1124.541,Upsweep,2,142.6,3.56,10.89,...
+
+
+**ClickTrains.csv**（Click脉冲串实例级标注）
+关键列：Train_num, Ori_file_num, Train_start(s), Train_end(s), Train_duration(ms), Num_of_pulses, Mean_IPI(ms), Mean_Fpeak(kHz), ...
+样例行：
+
+1,1,278.2543,278.7155,461.2,4,152.99,58.33,...
+10,1,1000.4539,1001.0202,566.3,15,40.25,113.47,...
+
+
+**BurstPulseTrains.csv**（Burst脉冲串实例级标注）
+关键列：Train_num, Ori_file_num, Train_start(s), Train_end(s), Mean_IPI(ms), Mean_Fpeak(kHz), ...
+样例行：
+
+1,1,1631.0973,1631.1532,55.86,8,7.93,39.38,...
+8,10,351.6915,352.7461,1054.68,75,14.25,74.78,...
+
+
+**BuzzTrains.csv**（Buzz脉冲串实例级标注）
+关键列：Train_num, Ori_file_num, Train_start(s), Train_end(s), Mean_IPI(ms), Mean_Fpeak(kHz), ...
+样例行：
+
+1,4,1591.6738,1591.7458,72.03,21,3.59,43.21,...
+24,6,1165.5617,1166.0812,519.45,167,3.1,91.06,...
+
+
+**文件结束**
+（此skill.md已完整集成所有要求，包括48kHz下采样、522维特征、10秒实例、Attention/MLP/Metadata细节、数据分割、localization 2秒容忍、超参数默认值、configs/default.yaml字段、脚本化执行及k折交叉验证配置接口等。）

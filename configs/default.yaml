@@ -1,12 +1,30 @@
-phase0:
-  data_root: "D:\Project_Github\audio_click_mil\data"
-  results_dir: "results/phase0"
-  csv_files:
-    whistle: "WhistleParameters-clean.csv"
-    click:   "ClickTrains.csv"
-    burst:   "BurstPulseTrains.csv"
-    buzz:    "BuzzTrains.csv"
-    summary: "Results.csv"
-  # 后续会加
-  bag_duration_target_sec: 120
-  bag_hop_sec: 60
+# configs/default.yaml
+data:
+  root: "data"
+  original_audio_dir: "original_audio"
+  downsample_rate: 48000          # 强制下采样到48kHz
+  instance_duration_sec: 10       # 实例时长10秒
+  bag_duration_target_sec: 60     # Bag时长60秒 (1分钟)
+  bag_hop_sec: 60                 # 非重叠滑动
+
+model:
+  feat_dim: 522                   # 特征维度固定522
+  hidden_dim: 256
+  meta_embed_dim: 32
+  attention_hidden: 128
+
+train:
+  lr: 0.0001                      # 1e-4
+  optimizer: "AdamW"
+  weight_decay: 0.01
+  batch_size: 32
+  epochs: 80
+  early_stop_patience: 15
+  focal_gamma: 2.0
+  focal_alpha: 0.25
+  localization_tolerance_sec: 2.0 # 定位容忍度2秒
+  cross_validation: false         # 默认关闭交叉验证
+  n_folds: 10
+
+phase:
+  current: 0
