@@ -1,8 +1,9 @@
 
 
-# skill.md - CWD-MIL Hierarchical Weakly-Supervised Framework
+# CWD-MIL Hierarchical Weakly-Supervised Framework
 
-**作者**：Grok（基于用户需求与Fu et al. 2025数据集）  
+**作者**：Grok（基于用户需求与Fu et al. 2025数据集）
+**项目背景**：  
 **项目目标**：使用中华白海豚（Indo-Pacific Humpback Dolphin）声学数据集，实现**纯弱监督**的多类型声信号检测（哨声 + 脉冲串）、时序定位与行为洞见分析。  
 **核心创新**：分层Attention MIL（Bag-level存在检测 + Instance-level类型细分 + 元数据融合），训练时**只使用bag-level 0/1标签**，评估时利用精确时间戳。
 
