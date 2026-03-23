@@ -1,0 +1,13 @@
+﻿file_num,bag_idx,bag_start_sec,bag_end_sec,label,train_duration_in_bag_sec,audio_filename,audio_duration_sec,sample_rate
+11,0,0.0,60.0,0,0.0,Ori_Recording_11.wav,769.32,576000
+11,1,60.0,120.0,0,0.0,Ori_Recording_11.wav,769.32,576000
+11,2,120.0,180.0,1,0.6306,Ori_Recording_11.wav,769.32,576000
+11,3,180.0,240.0,0,0.0,Ori_Recording_11.wav,769.32,576000
+11,4,240.0,300.0,0,0.0,Ori_Recording_11.wav,769.32,576000
+11,5,300.0,360.0,1,6.2685,Ori_Recording_11.wav,769.32,576000
+11,6,360.0,420.0,0,0.0,Ori_Recording_11.wav,769.32,576000
+11,7,420.0,480.0,0,0.0,Ori_Recording_11.wav,769.32,576000
+11,8,480.0,540.0,0,0.0,Ori_Recording_11.wav,769.32,576000
+11,9,540.0,600.0,1,9.1765,Ori_Recording_11.wav,769.32,576000
+11,10,600.0,660.0,1,8.0949,Ori_Recording_11.wav,769.32,576000
+11,11,660.0,720.0,0,0.0,Ori_Recording_11.wav,769.32,576000
