@@ -34,18 +34,31 @@ PAM重要性、时间分布的意义、Click信号的生态意义
 * 每折中取训练集的最后一个 .wav 文件作为该折的验证集；
 * 其余文件作为训练集。
 
-所有音频首先进行预处理：
-
-* 降采样至 48 kHz；
-* 应用 5 kHz 高通巴特沃斯滤波器（6阶）去除低频噪声；
-* 以 1分钟 为单位均匀切分为非重叠的 bag（每个 bag 包含 60 个 1秒实例）。考虑到弱监督下 bag 粒度已较粗，因此采用任何重叠即正的保守策略。
-
 标签生成依据三个标注文件（BurstPulseTrains.csv、BuzzTrains.csv、ClickTrains.csv）中的 Train_start(s)、Train_end(s) 和 Ori_file_num 列。本研究视三者为广义 pulse瞬态事件，未作细分类。对于每个 1分钟 bag：
 
 * 若该 bag 时间范围内存在任一 BurstPulse、Buzz 或 Click train 的时间段与之重叠，则标记为正样本（bag label = 1）；
 * 否则标记为负样本（bag label = 0）；
 * 对于正样本 bag，同时记录其中所有 train 片段的总持续时间求和（单位：秒），用于后续生态指标计算参考。
 
+（该步骤已完成）
+输出了两份文件：  
+- D:\Project_Github\audio_click_mil\processed_data\all_bags.csv
+格式：
+file_num,audio_file,bag_idx,bag_start_sec,bag_end_sec,label,train_duration_sec,audio_duration_sec
+1,Ori_Recording_01.wav,0,0.0,60.0,0,0.0,1799.44
+1,Ori_Recording_01.wav,1,60.0,120.0,0,0.0,1799.44
+1,Ori_Recording_01.wav,2,120.0,180.0,0,0.0,1799.44
+...
+
+- D:\Project_Github\audio_click_mil\processed_data\file_summary.csv
+格式：
+file_num,audio_file,duration_min,n_bags,positive_bags,total_train_sec
+1,Ori_Recording_01.wav,30.0,29,6,4.82
+2,Ori_Recording_02.wav,30.0,29,21,136.98
+3,Ori_Recording_03.wav,30.0,29,5,9.15
+4,Ori_Recording_04.wav,30.0,29,6,9.8
+5,Ori_Recording_05.wav,30.0,29,10,10.39
+...
 
 #### 2.2 实例级先验特征构建
 
@@ -55,10 +68,30 @@ PAM重要性、时间分布的意义、Click信号的生态意义
 
 该特征分别进行per-file内 min-max 归一化后，得到每个实例的先验分数 $  s_i \in [0,1]  $，用于表征该时间片段含有pulse信号的先验置信度。
 
-#### 2.3 模型架构与先验引导注意力机制
-* 特征提取：MFCC + 时域统计特征 → Temporal Convolutional Network (TCN) [@fonollosa2025Temporal]；
+（该步骤已完成）
+输出了一份文件：  
+D:\Project_Github\audio_click_mil\processed_data\instance_prior.csv
+格式：
+file_num,bag_idx,instance_idx,prior_score
+1,0,0,2.4519616455276935e-05
+1,0,1,0.00012015421314976077
+1,0,2,0.0003970738631317273
+1,0,3,3.967948078831791e-05
+1,0,4,6.0557291258283506e-05
+1,0,5,0.00024212038014940687
+......
 
-* 注意力模块：在标准注意力 logit 计算中引入先验引导：$$a_i = \text{softmax}\left( f(\mathbf{x}_i) + \alpha \cdot g(s_i) \right)$$其中 $  f(\mathbf{x}_i)  $ 为模型学习得到的实例判别分数，$  g(\cdot)  $ 为先验分数的映射函数（$linear(s_i) → ReLU → linear$），$  \alpha  $ 为固定的超参数，用于控制先验影响强度；
+#### 2.3 模型架构与先验引导注意力机制
+所有音频首先进行预处理：
+
+* 降采样至 48 kHz；
+* 应用 5 kHz 高通巴特沃斯滤波器（6阶）去除低频噪声；
+* 以 1分钟 为单位均匀切分为非重叠的 bag（每个 bag 包含 60 个 1秒实例）。考虑到弱监督下 bag 粒度已较粗，因此采用任何重叠即正的保守策略。
+* 将每个bag划分为60个1s的instance。
+
+* 特征提取：对每个instance做40维MFCC（保存.npy）  → 每个bag的60个instance MFCC输入Temporal Convolutional Network (TCN) [@fonollosa2025Temporal]得到特征表示；
+
+* 注意力模块：在标准注意力 logit 计算中引入先验引导：$$a_i = \text{softmax}\left( tanh(f(\mathbf{x}_i)) + \alpha \cdot g(s_i) \right)$$其中 $  f(\mathbf{x}_i)  $ 为模型学习得到的实例判别分数，$  g(\cdot)  $ 为先验分数的映射函数（$linear(s_i) → ReLU → linear$），$  \alpha  $ 为固定的超参数，用于控制先验影响强度；
 * Bag 表示：对所有实例特征进行注意力加权求和，得到 bag-level 表示；
 * 分类头：二分类（sigmoid 输出 bag 是否含有 pulse）。
 
