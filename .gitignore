@@ -7,6 +7,8 @@ data/original_audio/*/
 results/*/
 processed_data/*/
 Trial/*/
+实验记录/*/
+
 
 # Python
 __pycache__/

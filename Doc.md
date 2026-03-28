@@ -72,7 +72,17 @@ file_num,audio_path,bag_idx,bag_start_sec,bag_end_sec,bag_label,total_train_dura
 
 代码：scripts\03_instance_bag_npy.ipynb
 
-输出：D:\Project_Github\audio_click_mil\processed_data\instances
+
+输出：
+D:\Project_Github\audio_click_mil\processed_data\instance_labels.csv
+```
+file_num,bag_idx,instance_idx,bag_label,instance_label,instance_start_sec,npy_file
+1,4,0,1,0,240.0,file_01_bag_004_label_1.npy
+1,4,1,1,0,241.0,file_01_bag_004_label_1.npy
+```
+
+D:\Project_Github\audio_click_mil\processed_data\balanced_bags
+
 ```
 file_01_bag_000_label_0.npy
 命名方式：file_<audio序号数>_bag_<在一个audio中的位置>_label_<标签>.npy

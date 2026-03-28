@@ -19,42 +19,50 @@ GT_CSVS = [
     r"D:\Project_Github\audio_click_mil\data\BurstPulseTrains.csv",
     r"D:\Project_Github\audio_click_mil\data\BuzzTrains.csv"
 ]
-RESULT_DIR = r"D:\Project_Github\audio_click_mil\processed_data\results"
-MODEL_DIR = r"D:\Project_Github\audio_click_mil\processed_data\models"
+RESULT_DIR = r"D:\Project_Github\audio_click_mil\results"
+MODEL_DIR = r"D:\Project_Github\audio_click_mil\models"
 os.makedirs(RESULT_DIR, exist_ok=True)
 os.makedirs(MODEL_DIR, exist_ok=True)
 
 # --- 模型与 Dataset 定义保持不变 ---
 class BagDataset(Dataset):
     def __init__(self, bag_list, feature_method):
-        self.bags = []; self.labels = []; self.file_nums = []; self.bag_idxs = []
+        self.bag_paths = [] # 改为存储路径
+        self.labels = []
         feat_dir = os.path.join(FEATURE_BASE, feature_method)
         for bag_info in bag_list:
             fname = f"file_{bag_info['file_num']:02d}_bag_{bag_info['bag_idx']:03d}_label_{bag_info['bag_label']}_feat.npy"
             fpath = os.path.join(feat_dir, fname)
             if os.path.exists(fpath):
-                feat = np.load(fpath)
-                self.bags.append(torch.tensor(feat, dtype=torch.float32))
+                self.bag_paths.append(fpath)
                 self.labels.append(bag_info['bag_label'])
-                self.file_nums.append(bag_info['file_num'])
-                self.bag_idxs.append(bag_info['bag_idx'])
     
-    def __len__(self): return len(self.bags)
-    def __getitem__(self, idx): return self.bags[idx], torch.tensor(self.labels[idx], dtype=torch.float32)
-
+    def __len__(self): return len(self.labels)
+    
+    def __getitem__(self, idx):
+        # 每次读取时转换，确保它是全新的叶子节点，不带任何梯度历史
+        feat = np.load(self.bag_paths[idx])
+        return torch.from_numpy(feat).float(), torch.tensor(self.labels[idx]).float()
+    
 class SimpleMIL(nn.Module):
-    def __init__(self, feat_dim=32):
+    def __init__(self, feat_dim=128):
         super().__init__()
-        self.proj = nn.Linear(feat_dim, 128)
+        self.proj = nn.Sequential(
+            nn.Linear(feat_dim, 128),
+            nn.BatchNorm1d(128), # fix:加入Batchnorm稳定特征分布
+            nn.ReLU()
+        )
         self.attn = nn.Linear(128, 1)
         self.classifier = nn.Linear(128, 1)
     
-    def forward(self, bag):
-        h = torch.relu(self.proj(bag))
-        logits = self.attn(h).squeeze(-1)
+    def forward(self, bag): # bag: (60, 128)
+        h = self.proj(bag)  # (60, 128)
+        logits = self.attn(h).squeeze(-1) # (60,)
         attn_weights = torch.softmax(logits, dim=0)
-        bag_rep = torch.sum(attn_weights.unsqueeze(-1) * h, dim=0)
-        logit = self.classifier(bag_rep) # 去掉 squeeze()
+        
+        # 这里的注意力加权融合
+        bag_rep = torch.sum(attn_weights.unsqueeze(-1) * h, dim=0) # (128,)
+        logit = self.classifier(bag_rep)
         return logit, attn_weights
 
 # --- 辅助函数保持不变 ---
@@ -78,7 +86,7 @@ def compute_instance_label(file_num, bag_start_sec, instance_idx, gt_dfs):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--feature_method', type=str, default='mfcc', choices=['teager', 'wavelet', 'mfcc', 'logmel'])
+    parser.add_argument('--feature_method', type=str, default='mfcc', choices=['teager', 'wavelet', 'mfcc', 'logmel','cqt','gammatone'])
     # 适配 Jupyter
     import sys
     if 'ipykernel' in sys.modules:
@@ -101,7 +109,7 @@ if __name__ == "__main__":
     # 2. 初始化模型与训练
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = SimpleMIL().to(device)
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = optim.Adam(model.parameters(), lr=1e-4)
     criterion = nn.BCEWithLogitsLoss()
     
     print(f"Using device: {device}")
@@ -109,12 +117,18 @@ if __name__ == "__main__":
     for epoch in tqdm(range(50), desc="Epoch进度"):
         model.train()
         for bag, label in train_loader:
-            bag, label = bag.to(device), label.to(device)
+            bag, label = bag.to(device).detach(), label.to(device) # 增加 .detach()
             optimizer.zero_grad()
+            
+            # 这里的 bag.squeeze(0) 是为了去掉 DataLoader 自动加的 batch 维度
             logit, _ = model(bag.squeeze(0))
             loss = criterion(logit.view(-1), label.view(-1))
+            
             loss.backward()
             optimizer.step()
+
+            print(f"Loss: {loss.item():.4f}") # 看看 Loss 是否在变化如果 Loss 永远不变：说明梯度断了。如果 Loss 在变但结果不变：说明学习率太低或特征完全没有区分度。
+            break
 
     # 3. 保存模型
     model_path = os.path.join(MODEL_DIR, f"simple_mil_{args.feature_method}.pth")
