@@ -5,6 +5,8 @@ data/original_audio/*/
 
 # 实验输出
 results/*/
+processed_data/*/
+Trial/*/
 
 # Python
 __pycache__/
@@ -20,3 +22,4 @@ venv/
 *.pth
 *.h5
 *.pkl
+*.pt
