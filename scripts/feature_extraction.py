@@ -6,7 +6,7 @@ import librosa
 import pywt
 
 # 绝对路径
-INSTANCE_DIR = r"D:\Project_Github\audio_click_mil\processed_data\instances"
+INSTANCE_DIR = r"D:\Project_Github\audio_click_mil\processed_data\balanced_bags"
 FEATURE_BASE = r"D:\Project_Github\audio_click_mil\processed_data\features"
 
 def robust_pool(matrix, target_n=128):
@@ -99,12 +99,12 @@ def wavelet_feature(wave, n=128):
 
 def mfcc_feature(wave, sr, n=128):
     # 提取 64 维 MFCC
-    mfcc = librosa.feature.mfcc(y=wave, sr=sr, n_mfcc=64, n_fft=2048, hop_length=512)
+    mfcc = librosa.feature.mfcc(y=wave, sr=sr, n_mfcc=64, n_fft=2048, hop_length=1024)
     return robust_pool(mfcc, target_n=n)
 
 def logmel_cnn_feature(wave, sr, n=128):
-    mel = librosa.feature.melspectrogram(y=wave, sr=sr, n_mels=64, n_fft=2048, 
-                                         hop_length=512, fmin=5000, fmax=sr//2)
+    mel = librosa.feature.melspectrogram(y=wave, sr=sr, n_mels=128, n_fft=2048, 
+                                         hop_length=1024, fmin=5000, fmax=sr//2)
     logmel = librosa.power_to_db(mel)
     return robust_pool(logmel, target_n=n)
 
