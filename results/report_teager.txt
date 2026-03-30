@@ -1,0 +1,10 @@
+              precision    recall  f1-score   support
+
+           0       0.49      0.93      0.64        40
+           1       0.80      0.24      0.37        50
+
+    accuracy                           0.54        90
+   macro avg       0.65      0.58      0.51        90
+weighted avg       0.66      0.54      0.49        90
+
+Hit Rate (Attn > 2/N): 0.5000
